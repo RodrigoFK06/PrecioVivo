@@ -77,6 +77,7 @@
 ## 5. Backfill
 - **~120 PDF diarios = 6 meses** (días hábiles, ~20/mes). El archivo tiene **≥2 años** → factible incluso más. (El atajo "7-día strip / 26 archivos" era del Boletín, no de esta serie — no aplica.)
 - **Captura-forward** desde ya + backfill por páginas-mes. Ajustar expectativas de forecasting a la historia real.
+- **Nota de drift (verificada):** el parser order-based maneja el formato actual (2026) limpio. Ediciones **muy viejas (p.ej. 2024)** rinden el bloque de Masa de Ingreso en baselines verticales distintos al de precios → la asociación por fila falla. Backfill profundo (>1 año) requerirá una estrategia de asociación por banda para esas ediciones; no bloquea el MVP (que usa data actual + forward).
 
 ---
 
