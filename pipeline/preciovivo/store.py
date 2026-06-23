@@ -36,6 +36,12 @@ CREATE TABLE IF NOT EXISTS precios_diarios (
     PRIMARY KEY (producto_id, mercado_id, fecha));
 CREATE INDEX IF NOT EXISTS ix_precios_prod_fecha ON precios_diarios (producto_id, fecha);
 CREATE INDEX IF NOT EXISTS ix_precios_fecha ON precios_diarios (fecha);
+CREATE TABLE IF NOT EXISTS pronosticos (
+    producto_id INTEGER NOT NULL, mercado_id INTEGER NOT NULL,
+    fecha_generado TEXT NOT NULL, horizonte INTEGER NOT NULL,
+    precio_estimado REAL, metodo TEXT, intervalo_lo REAL, intervalo_hi REAL, mae REAL,
+    PRIMARY KEY (producto_id, mercado_id, fecha_generado, horizonte));
+CREATE INDEX IF NOT EXISTS ix_pronosticos_prod ON pronosticos (producto_id, fecha_generado);
 CREATE TABLE IF NOT EXISTS fuentes_raw (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     fuente TEXT NOT NULL, fecha TEXT, url TEXT NOT NULL, sha256 TEXT NOT NULL,
@@ -51,6 +57,13 @@ _PRECIO_COLS = [
     "tendencia", "fuente", "cargado_en",
 ]
 _PRECIO_UPDATE = [c for c in _PRECIO_COLS if c not in ("fecha", "mercado_id", "producto_id")]
+
+_PRONOSTICO_COLS = [
+    "producto_id", "mercado_id", "fecha_generado", "horizonte",
+    "precio_estimado", "metodo", "intervalo_lo", "intervalo_hi", "mae",
+]
+_PRONOSTICO_PK = ("producto_id", "mercado_id", "fecha_generado", "horizonte")
+_PRONOSTICO_UPDATE = [c for c in _PRONOSTICO_COLS if c not in _PRONOSTICO_PK]
 
 
 def _now() -> str:
@@ -142,6 +155,54 @@ class Store:
                 ))
                 n += 1
         return n
+
+    def upsert_pronosticos(self, fecha_generado, items, mercado_id: int | None = None) -> int:
+        """Guarda pronósticos. Idempotente en (producto, mercado, fecha_generado, horizonte).
+
+        `items`: iterable de (nombre_canonico, forecast_dict), donde forecast_dict
+        sigue el contrato producto.forecast de forecast.py:
+          {metodo, horizonte_dias, precio_estimado, intervalo:[lo,hi], mae_modelo, ...}
+        El producto se resuelve/crea por nombre_canonico (no se reescriben unidad/equiv:
+        se conservan si ya existe; si es nuevo, quedan en NULL).
+        """
+        mid = mercado_id if mercado_id is not None else self.mercado_id(*GMML)
+        fecha_s = fecha_generado.isoformat() if hasattr(fecha_generado, "isoformat") else str(fecha_generado)
+        cols = ", ".join(_PRONOSTICO_COLS)
+        marks = ", ".join([self.ph] * len(_PRONOSTICO_COLS))
+        sets = ", ".join(f"{c}=excluded.{c}" for c in _PRONOSTICO_UPDATE)
+        conflict = ", ".join(_PRONOSTICO_PK)
+        sql = (f"INSERT INTO pronosticos ({cols}) VALUES ({marks}) "
+               f"ON CONFLICT ({conflict}) DO UPDATE SET {sets}")
+        n = 0
+        with self._cursor() as cur:
+            for nombre, fc in items:
+                pid = self._producto_id_existente(cur, nombre)
+                interval = fc.get("intervalo") or [None, None]
+                lo = interval[0] if len(interval) > 0 else None
+                hi = interval[1] if len(interval) > 1 else None
+                cur.execute(sql, (
+                    pid, mid, fecha_s, int(fc.get("horizonte_dias", 1)),
+                    fc.get("precio_estimado"), fc.get("metodo"),
+                    lo, hi, fc.get("mae_modelo"),
+                ))
+                n += 1
+        return n
+
+    def _producto_id_existente(self, cur, nombre: str) -> int:
+        """Resuelve producto_id por nombre_canonico, creándolo si no existe.
+
+        A diferencia de `producto_id`, no pisa unidad_default/equiv_kg (el forecast
+        no aporta esos campos). Reusa el cursor de la transacción en curso.
+        """
+        cur.execute(f"SELECT id FROM productos WHERE nombre_canonico={self.ph}", (nombre,))
+        row = cur.fetchone()
+        if row:
+            return row[0]
+        cur.execute(
+            f"INSERT INTO productos (nombre_canonico) VALUES ({self.ph}) "
+            f"ON CONFLICT (nombre_canonico) DO NOTHING", (nombre,))
+        cur.execute(f"SELECT id FROM productos WHERE nombre_canonico={self.ph}", (nombre,))
+        return cur.fetchone()[0]
 
     def record_raw(self, fuente, fecha, url, sha256, nbytes):
         fecha_s = fecha.isoformat() if hasattr(fecha, "isoformat") else (fecha or None)

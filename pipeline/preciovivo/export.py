@@ -78,7 +78,7 @@ def build(db_path: str = DB) -> dict:
         })
     productos.sort(key=lambda x: x["nombre"])
 
-    return {
+    snapshot = {
         "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "mercado": "Gran Mercado Mayorista de Lima (GMML)",
         "latestFecha": latest,
@@ -87,6 +87,83 @@ def build(db_path: str = DB) -> dict:
         "attribution": ATTRIBUTION,
         "productos": productos,
     }
+
+    # --- Fase 3: pronósticos honestos + kill-gate volumen->precio --------------
+    _add_forecast(snapshot, productos, db_path)
+    # --- Fase 4: capa IA (anomalías estadísticas + resumen del día) -----------
+    _add_ia(snapshot, productos, db_path)
+
+    return snapshot
+
+
+def _add_forecast(snapshot: dict, productos: list[dict], db_path: str) -> None:
+    """Adjunta producto.forecast (por producto) y snapshot.forecastMeta.kill_gate.
+
+    Lee la BD una sola vez vía forecast.forecast_all y mapea por nombre_canonico,
+    que es la clave de `por_slug` y el 'nombre' de cada producto del snapshot.
+    Si forecast falla, no rompe el snapshot base (degrada con forecastMeta vacío).
+    """
+    try:
+        from . import forecast as F
+        res = F.forecast_all(db_path)
+        por = res.get("por_slug", {})
+        for p in productos:
+            fc = por.get(p["nombre"])
+            if fc is not None:
+                p["forecast"] = fc
+        snapshot["forecastMeta"] = {"kill_gate": res.get("kill_gate", {})}
+    except Exception as e:  # noqa: BLE001 - el snapshot base no debe caerse
+        snapshot["forecastMeta"] = {"kill_gate": {}, "error": f"{type(e).__name__}: {e}"}
+
+
+def _build_facts(snapshot: dict, productos: list[dict]) -> dict:
+    """Arma 'facts' para ai.daily_summary desde el snapshot ya construido.
+
+    No re-lee la BD: usa los latest/var_pct de cada producto. subas/bajas son los
+    mayores movimientos del último día; ingreso_total_t es la suma de masa_hoy.
+    """
+    movers = []
+    ingreso = 0.0
+    tiene_ingreso = False
+    for p in productos:
+        lat = p.get("latest") or {}
+        var = lat.get("var_pct")
+        if var is not None:
+            movers.append({"nombre": p["nombre"], "var_pct": var,
+                           "precio_kg": lat.get("precio_kg")})
+        m = lat.get("masa_hoy")
+        if m is not None:
+            ingreso += float(m)
+            tiene_ingreso = True
+    movers.sort(key=lambda m: m["var_pct"])
+    subas = [m for m in reversed(movers[-3:]) if m["var_pct"] > 0] if movers else []
+    bajas = [m for m in movers[:3] if m["var_pct"] < 0] if movers else []
+    return {
+        "fecha": snapshot.get("latestFecha"),
+        "mercado": snapshot.get("mercado"),
+        "n_productos": len(productos),
+        "subas": subas,
+        "bajas": bajas,
+        "ingreso_total_t": round(ingreso, 1) if tiene_ingreso else None,
+    }
+
+
+def _add_ia(snapshot: dict, productos: list[dict], db_path: str) -> None:
+    """Adjunta snapshot.anomalias (z-score robusto) y snapshot.resumenIA.
+
+    detecta_anomalias recibe el snapshot ya construido (sin reabrir SQLite).
+    daily_summary degrada a fuente='fallback' sin ANTHROPIC_API_KEY. Si la capa
+    falla, el snapshot base se conserva con anomalias=[] y un resumen vacío.
+    """
+    try:
+        from .ai import detecta_anomalias, daily_summary
+        snapshot["anomalias"] = detecta_anomalias(snapshot)
+        facts = _build_facts(snapshot, productos)
+        snapshot["resumenIA"] = daily_summary(facts)
+    except Exception as e:  # noqa: BLE001 - el snapshot base no debe caerse
+        snapshot.setdefault("anomalias", [])
+        snapshot.setdefault("resumenIA", {"texto": "", "fuente": "fallback"})
+        snapshot["iaError"] = f"{type(e).__name__}: {e}"
 
 
 def main():

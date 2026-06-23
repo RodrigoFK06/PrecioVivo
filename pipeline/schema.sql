@@ -37,6 +37,24 @@ CREATE TABLE IF NOT EXISTS precios_diarios (
 CREATE INDEX IF NOT EXISTS ix_precios_prod_fecha ON precios_diarios (producto_id, fecha);
 CREATE INDEX IF NOT EXISTS ix_precios_fecha      ON precios_diarios (fecha);
 
+-- Pronósticos honestos (Fase 3): un registro por producto/mercado/origen/horizonte.
+-- precio_estimado, intervalo y mae provienen de forecast.py (baselines simples,
+-- validación walk-forward anti-leakage). NO son cifras del reporte: son estimaciones.
+CREATE TABLE IF NOT EXISTS pronosticos (
+    producto_id     INTEGER NOT NULL REFERENCES productos(id),
+    mercado_id      INTEGER NOT NULL REFERENCES mercados(id),
+    fecha_generado  DATE    NOT NULL,
+    horizonte       INTEGER NOT NULL,        -- horizonte en fechas hábiles
+    precio_estimado REAL,
+    metodo          TEXT,                     -- seasonal_naive | media_tendencia | naive | sin_datos
+    intervalo_lo    REAL,
+    intervalo_hi    REAL,
+    mae             REAL,
+    PRIMARY KEY (producto_id, mercado_id, fecha_generado, horizonte)
+);
+
+CREATE INDEX IF NOT EXISTS ix_pronosticos_prod ON pronosticos (producto_id, fecha_generado);
+
 -- Provenance / legal trail: one row per harvested source file (§0.5/§4).
 CREATE TABLE IF NOT EXISTS fuentes_raw (
     id          SERIAL PRIMARY KEY,

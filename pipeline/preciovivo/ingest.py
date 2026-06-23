@@ -4,6 +4,7 @@
   python -m preciovivo.ingest --month 2026-06     # a whole month
   python -m preciovivo.ingest --backfill-months 6 # last N months
   python -m preciovivo.ingest --sample <pdf>      # parse+load a local PDF
+  python -m preciovivo.ingest --forecast          # compute & store pronosticos
   python -m preciovivo.ingest --health            # source health check only
 
 Store: Postgres/Supabase if DATABASE_URL is set, else local SQLite.
@@ -14,6 +15,7 @@ import argparse
 import glob
 import os
 import sys
+from datetime import date
 
 from . import harvester as H
 from .parser import parse_report
@@ -70,6 +72,8 @@ def main(argv=None):
     ap.add_argument("--sample", metavar="PDF")
     ap.add_argument("--reparse", action="store_true",
                     help="re-parse cached raw PDFs in data/raw (no download) and re-load")
+    ap.add_argument("--forecast", action="store_true",
+                    help="compute honest forecasts for all products and store them")
     ap.add_argument("--health", action="store_true", help="check source URLs are live, then exit")
     args = ap.parse_args(argv)
 
@@ -105,6 +109,25 @@ def main(argv=None):
             ok += 1
             warn += len(res.warnings)
         print(f"summary: {ok} reparsed, {blocked} blocked, {warn} total warnings")
+    elif args.forecast:
+        from . import forecast as F
+        # forecast.py lee SQLite por db_path (o Postgres si DATABASE_URL). Pasamos
+        # la ruta del backend SQLite local; en Postgres usa DATABASE_URL internamente.
+        db_path = store.backend.split("sqlite:", 1)[1] if store.backend.startswith("sqlite:") \
+            else os.environ.get("PRECIOVIVO_DB", "../data/preciovivo.db")
+        res = F.forecast_all(db_path)
+        por = res.get("por_slug", {})
+        kg = res.get("kill_gate", {})
+        items = list(por.items())
+        hoy = date.today()
+        n = store.upsert_pronosticos(hoy, items)
+        con_pron = sum(1 for _, fc in items if fc.get("metodo") not in ("sin_datos",))
+        print(f"forecast: {n} pronósticos guardados (fecha_generado={hoy.isoformat()}) · "
+              f"{con_pron} con modelo, {len(items) - con_pron} sin datos")
+        print(f"kill-gate: volume_helps={kg.get('volume_helps')} "
+              f"mae_baseline={kg.get('mae_baseline')} "
+              f"mae_con_volumen={kg.get('mae_con_volumen')} "
+              f"mejora_pct={kg.get('mejora_pct')} n_productos={kg.get('n_productos')}")
     else:
         targets = _targets(args)
         print(f"targets: {len(targets)} dailies"

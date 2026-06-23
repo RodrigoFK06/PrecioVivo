@@ -1,0 +1,316 @@
+"""SISAP cross-check source (Fase 2, §4 redundancia).
+
+MIDAGRI publishes a short, stable, WAF-free daily PDF with mayorista-Lima prices
+already expressed in **S/ por Kg** for a handful of products across three markets
+(GRAN MERCADO MAYORISTA DE LIMA, MERCADO MAYORISTA DE AVES VIVAS -> POLLO VIVO,
+MERCADO MAYORISTA NRO 2-FRUTAS). We use it as an INDEPENDENT second opinion on the
+GMML numbers we already ingest from collection 335, not as a primary feed.
+
+Layout columns (left -> right):
+  Mercado | Producto | Precio Hoy (S/xKg) | Precio Ayer | Diferencia |
+  Promedio Mes | Promedio Últimos 7 días
+
+As with the reporte-335, the flowed text order is not guaranteed and the numeric
+band floats ~1px above the text baseline (so each logical row splits into two
+`top` values). We therefore parse by COORDINATE: cluster rows with a y-tolerance
+that re-merges that split, then assign the 5 numeric columns by x-center band and
+recover the producto by stripping the known mercado prefix from the left text.
+
+Public API:
+  fetch_sisap()                 -> (local_path, sha256, nbytes)
+  parse_sisap(pdf_path)         -> list[dict]   (one dict per producto row)
+  cross_check(sisap_rows, db)   -> list[dict]   (GMML deltas vs ../data/preciovivo.db)
+"""
+from __future__ import annotations
+
+import hashlib
+import os
+import re
+import sqlite3
+import unicodedata
+from datetime import date
+
+import pdfplumber
+import requests
+
+SISAP_URL = ("http://sistemas.midagri.gob.pe/sisap/intranet/mayoristas_lima/"
+             "modulos/reporte_precios.pdf")
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+RAW_DIR = os.environ.get("PRECIOVIVO_RAW", "../data/raw")
+FUENTE = "sisap"
+DEFAULT_DB = os.environ.get("PRECIOVIVO_DB", "../data/preciovivo.db")
+
+# Cross-check threshold (§4): flag GMML prices that disagree by more than this.
+DELTA_FLAG = 0.15
+
+# The three mercado labels are a closed set; the longest-matching prefix wins so
+# "MERCADO MAYORISTA NRO 2-FRUTAS" is not shadowed by a shorter partial.
+MERCADOS = (
+    "GRAN MERCADO MAYORISTA DE LIMA",
+    "MERCADO MAYORISTA DE AVES VIVAS",
+    "MERCADO MAYORISTA NRO 2-FRUTAS",
+)
+# Only this mercado overlaps our GMML feed; cross_check restricts to it.
+GMML_LABEL = "GRAN MERCADO MAYORISTA DE LIMA"
+
+# x-center bands for the 5 numeric columns (centers ~330/370/430/480/540; the
+# bands are generous to absorb minor edition drift, like parser.py's MASA_BANDS).
+PRICE_BANDS = (
+    ("precio_hoy_kg", 305, 350),
+    ("precio_ayer_kg", 350, 400),
+    ("diferencia", 400, 455),
+    ("prom_mes", 455, 510),
+    ("prom_7d", 510, 575),
+)
+TEXT_MAX_X = 305.0   # tokens left of the first numeric band are mercado+producto
+ROW_Y_TOL = 3.0      # merges the ~1px number/text baseline split
+
+MESES = {
+    "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
+    "julio": 7, "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10,
+    "noviembre": 11, "diciembre": 12,
+}
+
+_NUM_RE = re.compile(r"^-?\d+(?:[.,]\d+)?$")
+
+_session = requests.Session()
+_session.headers["User-Agent"] = UA
+
+
+# --- helpers -------------------------------------------------------------
+def _deaccent(s: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+
+
+def _norm(s: str) -> str:
+    """Match key: deaccented, upper, single-spaced. Bridges 'Ajo Criollo O Napuri'
+    (DB title case) and 'AJO CRIOLLO O NAPURI' (SISAP upper case)."""
+    return re.sub(r"\s+", " ", _deaccent(s).upper()).strip()
+
+
+def _num(s: str) -> float | None:
+    s = (s or "").strip()
+    if not _NUM_RE.match(s):
+        return None
+    try:
+        return float(s.replace(",", "."))
+    except ValueError:
+        return None
+
+
+def _center(w) -> float:
+    return (w["x0"] + w["x1"]) / 2
+
+
+def _split_mercado(text: str) -> tuple[str | None, str]:
+    """Strip the longest known mercado prefix; return (mercado, producto)."""
+    up = _norm(text)
+    best = None
+    for m in MERCADOS:
+        if up.startswith(m) and (best is None or len(m) > len(best)):
+            best = m
+    if best is None:
+        return None, text.strip()
+    return best, up[len(best):].strip()
+
+
+def _extract_fecha(page) -> date | None:
+    txt = _deaccent(page.extract_text() or "").lower()
+    m = re.search(r"(\d{1,2})\s+de\s+([a-z]+)\s+del?\s+(\d{4})", txt)
+    if m and MESES.get(m.group(2)):
+        return date(int(m.group(3)), MESES[m.group(2)], int(m.group(1)))
+    return None
+
+
+def _cluster_rows(words):
+    rows: list[dict] = []
+    for w in sorted(words, key=lambda w: (round(w["top"], 1), w["x0"])):
+        for r in rows:
+            if abs(r["top"] - w["top"]) <= ROW_Y_TOL:
+                r["items"].append(w)
+                break
+        else:
+            rows.append({"top": w["top"], "items": [w]})
+    return rows
+
+
+# --- fetch ---------------------------------------------------------------
+def fetch_sisap(out_dir: str | None = None) -> tuple[str, str, int]:
+    """Download the SISAP PDF to RAW_DIR as sisap_<fecha>.pdf.
+
+    Returns (local_path, sha256, nbytes). The filename date is parsed from the
+    PDF itself so the cache name reflects the report date, not the wall clock.
+    """
+    out_dir = out_dir or RAW_DIR
+    for k in range(3):
+        try:
+            r = _session.get(SISAP_URL, timeout=60)
+            r.raise_for_status()
+            data = r.content
+            break
+        except requests.RequestException:
+            if k == 2:
+                raise
+    if data[:5] != b"%PDF-":
+        raise ValueError("SISAP URL did not return a PDF")
+
+    os.makedirs(out_dir, exist_ok=True)
+    # Write to a temp name first so we can read the report date, then rename.
+    tmp = os.path.join(out_dir, "sisap_tmp.pdf")
+    with open(tmp, "wb") as f:
+        f.write(data)
+    with pdfplumber.open(tmp) as pdf:
+        fecha = _extract_fecha(pdf.pages[0])
+    stamp = fecha.isoformat() if fecha else "unknown"
+    path = os.path.join(out_dir, f"{FUENTE}_{stamp}.pdf")
+    os.replace(tmp, path)
+    return path, hashlib.sha256(data).hexdigest(), len(data)
+
+
+# --- parse ---------------------------------------------------------------
+def parse_sisap(pdf_path: str) -> list[dict]:
+    """Parse the SISAP PDF into a list of dicts, one per producto row.
+
+    Each dict: {mercado, producto, precio_hoy_kg, precio_ayer_kg, prom_mes,
+                prom_7d, fecha}. Prices are already S/ por Kg (no conversion).
+    """
+    out: list[dict] = []
+    with pdfplumber.open(pdf_path) as pdf:
+        page = pdf.pages[0]
+        fecha = _extract_fecha(page)
+        words = page.extract_words(use_text_flow=False, keep_blank_chars=False)
+        for r in _cluster_rows(words):
+            ws = sorted(r["items"], key=lambda w: w["x0"])
+            text_toks = [w["text"] for w in ws if w["x0"] < TEXT_MAX_X]
+            num_toks = [w for w in ws if w["x0"] >= TEXT_MAX_X]
+            if not text_toks or not num_toks:
+                continue
+
+            mercado, producto = _split_mercado(" ".join(text_toks))
+            if mercado is None or not producto:
+                continue  # header / footer / notes lines
+
+            cols: dict[str, float | None] = {k: None for k, _, _ in PRICE_BANDS}
+            for w in num_toks:
+                v = _num(w["text"])
+                if v is None:
+                    continue
+                c = _center(w)
+                for key, lo, hi in PRICE_BANDS:
+                    if lo <= c < hi and cols[key] is None:
+                        cols[key] = v
+                        break
+            # A real data row carries at least the two anchor prices.
+            if cols["precio_hoy_kg"] is None and cols["precio_ayer_kg"] is None:
+                continue
+
+            out.append({
+                "mercado": mercado,
+                "producto": producto,
+                "precio_hoy_kg": cols["precio_hoy_kg"],
+                "precio_ayer_kg": cols["precio_ayer_kg"],
+                "prom_mes": cols["prom_mes"],
+                "prom_7d": cols["prom_7d"],
+                "fecha": fecha,
+            })
+    return out
+
+
+# --- cross-check ---------------------------------------------------------
+def _gmml_prices(db_path: str, fecha) -> dict[str, float]:
+    """{normalized producto -> precio_hoy_kg} for GMML on `fecha`, from SQLite."""
+    fecha_s = fecha.isoformat() if hasattr(fecha, "isoformat") else str(fecha)
+    if not os.path.exists(db_path):
+        return {}
+    con = sqlite3.connect(db_path)
+    try:
+        rows = con.execute(
+            "SELECT p.nombre_canonico, pr.precio_hoy_kg "
+            "FROM precios_diarios pr JOIN productos p ON p.id = pr.producto_id "
+            "WHERE pr.fecha = ? AND pr.precio_hoy_kg IS NOT NULL",
+            (fecha_s,),
+        ).fetchall()
+    finally:
+        con.close()
+    return {_norm(n): v for n, v in rows}
+
+
+def cross_check(sisap_rows: list[dict], db_path: str | None = None) -> list[dict]:
+    """Compare SISAP GMML prices against our own GMML feed for the SAME day.
+
+    Returns one dict per GMML producto present in SISAP:
+      {producto, fecha, sisap_kg, gmml_kg, delta_pct, flag, detalle}
+    `flag` is True when |delta| > DELTA_FLAG (15%) or the producto is missing in
+    our DB for that date -- the redundancy condition we want surfaced (§4).
+    """
+    db_path = db_path or DEFAULT_DB
+    out: list[dict] = []
+    for row in sisap_rows:
+        if _norm(row["mercado"]) != _norm(GMML_LABEL):
+            continue
+        gmml = _gmml_prices(db_path, row["fecha"])
+        sisap_kg = row["precio_hoy_kg"]
+        gmml_kg = gmml.get(_norm(row["producto"]))
+
+        if sisap_kg is None:
+            continue
+        if gmml_kg is None:
+            out.append({
+                "producto": row["producto"], "fecha": row["fecha"],
+                "sisap_kg": sisap_kg, "gmml_kg": None, "delta_pct": None,
+                "flag": True,
+                "detalle": "sin contraparte GMML para esa fecha en la BD",
+            })
+            continue
+
+        base = gmml_kg if gmml_kg else (sisap_kg or 1.0)
+        delta = (sisap_kg - gmml_kg) / base if base else 0.0
+        flag = abs(delta) > DELTA_FLAG
+        detalle = (f"delta {delta*100:+.1f}% > {DELTA_FLAG*100:.0f}%"
+                   if flag else f"coincide ({delta*100:+.1f}%)")
+        out.append({
+            "producto": row["producto"], "fecha": row["fecha"],
+            "sisap_kg": sisap_kg, "gmml_kg": round(gmml_kg, 4),
+            "delta_pct": round(delta * 100, 2), "flag": flag, "detalle": detalle,
+        })
+    return out
+
+
+# --- CLI -----------------------------------------------------------------
+def _main() -> int:
+    print(f"Descargando SISAP: {SISAP_URL}")
+    path, sha, nbytes = fetch_sisap()
+    print(f"  guardado: {path}")
+    print(f"  sha256:   {sha}")
+    print(f"  bytes:    {nbytes}")
+
+    rows = parse_sisap(path)
+    fecha = rows[0]["fecha"] if rows else None
+    print(f"\nFecha del reporte: {fecha}   filas: {len(rows)}")
+    print(f"\n  {'MERCADO':<32.32} {'PRODUCTO':<22.22} {'HOY':>6} {'AYER':>6} "
+          f"{'P.MES':>6} {'P.7D':>6}")
+    for r in rows:
+        print(f"  {r['mercado']:<32.32} {r['producto']:<22.22} "
+              f"{r['precio_hoy_kg']!s:>6} {r['precio_ayer_kg']!s:>6} "
+              f"{r['prom_mes']!s:>6} {r['prom_7d']!s:>6}")
+
+    print("\nCross-check GMML (SISAP vs BD propia, mismo dia):")
+    cc = cross_check(rows)
+    if not cc:
+        print("  (sin filas GMML para contrastar)")
+    flagged = 0
+    for c in cc:
+        mark = "[!]" if c["flag"] else "   "
+        if c["flag"]:
+            flagged += 1
+        gmml = "  -  " if c["gmml_kg"] is None else f"{c['gmml_kg']}"
+        print(f"  {mark} {c['producto']:<24.24} sisap={c['sisap_kg']!s:>6}  "
+              f"gmml={gmml:>6}  {c['detalle']}")
+    print(f"\n  {len(cc)} productos GMML contrastados, "
+          f"{flagged} marcados (delta > {DELTA_FLAG*100:.0f}%).")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())
