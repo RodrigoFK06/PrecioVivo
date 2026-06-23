@@ -64,6 +64,11 @@ export default async function Home() {
           {snap.mercado} · actualizado el{" "}
           <span className="font-medium text-slate-700">{fechaLarga(snap.latestFecha)}</span>
         </p>
+        <p className="text-slate-600 mt-3 text-[15px] max-w-2xl leading-relaxed">
+          Vamos hacia <span className="font-medium text-slate-900">predecir los precios mayoristas con IA</span>.
+          Hoy: la serie histórica limpia que nadie más tiene, qué subió y qué bajó, anomalías del día,
+          consultas en lenguaje natural y pronósticos beta. Lo construimos en público y con rigor.
+        </p>
         <div className="mt-4 flex flex-wrap gap-2 text-xs">
           <span className="rounded-full bg-white border border-slate-200 px-3 py-1 tabular-nums shadow-sm">
             {snap.productCount} productos

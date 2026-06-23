@@ -7,9 +7,9 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Precio Vivo — precios mayoristas del Perú, en vivo",
+  title: "Precio Vivo — hacia la predicción de precios mayoristas con IA",
   description:
-    "Precios diarios del Gran Mercado Mayorista de Lima (GMML): qué subió, qué bajó y cómo viene la tendencia. Inteligencia de mercado con IA.",
+    "Inteligencia de precios del Gran Mercado Mayorista de Lima (GMML): precios diarios, qué subió y qué bajó, anomalías y pronósticos beta. Construimos hacia la predicción de precios con IA, en público.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

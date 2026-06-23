@@ -82,8 +82,8 @@ export default function ForecastPanel({ producto }: { producto: Producto }) {
       </div>
 
       <p className="mt-3 text-[11px] leading-relaxed text-slate-400">
-        BETA. Basado en baselines de precio, no en volumen: el volumen es señal de oferta/anomalía,
-        no predictor (ver nota metodológica). Referencial, no asesoría de compra.
+        BETA, en camino a la predicción con IA. Hoy parte de baselines de precio: con la data disponible
+        el volumen aún no mejora la predicción (ver nota metodológica). Referencial, no asesoría de compra.
       </p>
     </div>
   );

@@ -17,6 +17,8 @@
 ### 0.1 Qué es y para quién (el comprador, explícito)
 **Árkos vende productos de datos+IA a empresas medianas de LatAm.** Precio Vivo **no es un SaaS para los vendedores del mercado** — es el **showcase de capacidad** que prueba que Árkos convierte PDFs públicos sucios en un producto de IA vivo. El lead que importa: la empresa que ve el showcase y quiere software a medida.
 
+**Meta (norte):** *predecir los precios mayoristas con IA.* No la abandonamos. **Honestidad sobre el hoy:** todavía no llegamos — lo que tenemos hoy es (a) la serie histórica limpia que nadie más tiene, (b) inteligencia diaria (movers, anomalías, consulta en lenguaje natural) y (c) pronósticos **beta** sobre baselines de precio. Avanzamos en público y con rigor: cada hipótesis se prueba contra un baseline y solo se conserva lo que mejora. La UI distingue claramente **meta** vs **hoy** — nunca vendemos como "logrado" lo que es "en camino".
+
 ### 0.5 Base legal de redistribución (bloqueante por fuente)
 - Registrar por fuente: URL exacta · si está en `datosabiertos.gob.pe` (PNDA, **DS 016-2017-PCM**) · teoría de respaldo si no.
 - **Regla operativa:** precios y tonelajes son **HECHOS no protegidos** → republicar **hechos numéricos normalizados**, **nunca** re-hostear el PDF fuente ni la prosa.
