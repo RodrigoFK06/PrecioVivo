@@ -16,38 +16,44 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="es" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col bg-slate-50 text-slate-900">
-        <header className="border-b border-slate-200 bg-white">
-          <div className="mx-auto max-w-6xl px-4 py-3 flex items-center justify-between">
-            <Link href="/" className="flex items-center gap-2">
-              <span className="inline-block h-5 w-5 rounded-sm bg-emerald-500" />
-              <span className="font-semibold tracking-tight text-lg">Precio Vivo</span>
-              <span className="hidden sm:inline text-xs text-slate-400 font-medium">
+        <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/85 backdrop-blur supports-[backdrop-filter]:bg-white/70">
+          <div className="mx-auto max-w-6xl px-4 py-3 flex items-center justify-between gap-3">
+            <Link href="/" className="group flex items-center gap-2.5 rounded-md">
+              <span className="relative inline-flex h-6 w-6 items-center justify-center rounded-md bg-emerald-500 shadow-sm transition-transform group-hover:scale-105">
+                <span className="absolute inline-block h-2 w-2 rounded-full bg-white/90" />
+              </span>
+              <span className="font-semibold tracking-tight text-lg leading-none">Precio Vivo</span>
+              <span className="hidden sm:inline text-xs text-slate-400 font-medium border-l border-slate-200 pl-2.5">
                 Gran Mercado Mayorista de Lima
               </span>
             </Link>
             <a
               href="#arkos"
-              className="text-xs font-medium text-slate-500 hover:text-emerald-600 transition-colors"
+              className="shrink-0 text-xs font-medium text-slate-500 hover:text-emerald-600 transition-colors"
             >
-              hecho por <span className="font-semibold">Árkos</span>
+              hecho por <span className="font-semibold text-slate-700">Árkos</span>
             </a>
           </div>
         </header>
 
         <main className="flex-1">{children}</main>
 
-        <footer id="arkos" className="border-t border-slate-200 bg-white mt-12">
-          <div className="mx-auto max-w-6xl px-4 py-8 text-sm text-slate-500 space-y-4">
-            <div className="rounded-lg bg-slate-900 text-white p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <p className="font-semibold text-white">¿Necesitas software de datos + IA a medida?</p>
-                <p className="text-slate-300 text-xs mt-0.5">
-                  Precio Vivo lo construyó <span className="font-semibold text-white">Árkos</span> — de PDFs públicos a un producto vivo.
+        <footer id="arkos" className="border-t border-slate-200 bg-white mt-16">
+          <div className="mx-auto max-w-6xl px-4 py-10 text-sm text-slate-500 space-y-5">
+            <div className="relative overflow-hidden rounded-xl bg-slate-900 text-white p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm ring-1 ring-slate-900/5">
+              <span
+                aria-hidden
+                className="pointer-events-none absolute -right-16 -top-16 h-44 w-44 rounded-full bg-emerald-500/15 blur-2xl"
+              />
+              <div className="relative">
+                <p className="font-semibold text-white text-base">¿Necesitas software de datos + IA a medida?</p>
+                <p className="text-slate-300 text-sm mt-1 max-w-md leading-relaxed">
+                  Precio Vivo lo construyó <span className="font-semibold text-white">Árkos</span> — de PDFs públicos a un producto vivo, con pronóstico y consultas en lenguaje natural.
                 </p>
               </div>
               <a
                 href="mailto:hola@arkos.dev"
-                className="shrink-0 rounded-md bg-emerald-500 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-400 transition-colors text-center"
+                className="relative shrink-0 rounded-md bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-400 hover:shadow-md transition-all text-center"
               >
                 Hablemos →
               </a>

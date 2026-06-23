@@ -1,6 +1,3 @@
-import { promises as fs } from "fs";
-import path from "path";
-
 export type Point = {
   fecha: string;
   precio_kg: number | null;
@@ -19,6 +16,49 @@ export type Latest = {
   tendencia: string | null;
 };
 
+/**
+ * Pronóstico BETA. Se basa en baselines de PRECIO (no de volumen).
+ * El kill-gate (ver KillGate) mostró que el volumen NO mejora la predicción,
+ * así que el volumen es señal de oferta/anomalía, no predictor.
+ */
+export type Forecast = {
+  metodo: string;
+  horizonte_dias: number;
+  precio_estimado: number;
+  /** [lo, hi] intervalo del estimado. */
+  intervalo: [number, number];
+  mae_modelo: number;
+  mae_baseline: number;
+  n_obs: number;
+};
+
+/**
+ * Resultado del experimento metodológico (honesto): ¿el volumen ayuda a
+ * predecir el precio? volume_helps=false significa que NO.
+ */
+export type KillGate = {
+  volume_helps: boolean;
+  mae_baseline: number;
+  mae_con_volumen: number;
+  mejora_pct: number;
+  detalle: string;
+  n_productos: number;
+};
+
+export type Anomalia = {
+  slug: string;
+  nombre: string;
+  tipo: "precio" | "volumen";
+  fecha: string;
+  z: number;
+  detalle: string;
+};
+
+export type ResumenIA = {
+  texto: string;
+  fuente: "claude" | "fallback";
+};
+
 export type Producto = {
   nombre: string;
   slug: string;
@@ -27,6 +67,7 @@ export type Producto = {
   equiv_kg: number | null;
   series: Point[];
   latest: Latest;
+  forecast?: Forecast;
 };
 
 export type Snapshot = {
@@ -37,11 +78,19 @@ export type Snapshot = {
   productCount: number;
   attribution: string;
   productos: Producto[];
+  forecastMeta?: { kill_gate: KillGate };
+  anomalias?: Anomalia[];
+  resumenIA?: ResumenIA;
 };
 
 // Local-dev data bridge: read the JSON the Python pipeline exports.
 // In production this module is the single swap point to Supabase.
 export async function getSnapshot(): Promise<Snapshot> {
+  // Imports diferidos para que este módulo sea seguro en el cliente:
+  // los componentes "use client" (p. ej. ProductTable) importan tipos y
+  // utilidades puras de aquí sin arrastrar 'fs'/'path' al bundle del navegador.
+  const { promises: fs } = await import("node:fs");
+  const path = await import("node:path");
   const p = path.join(process.cwd(), "data", "snapshot.json");
   const raw = await fs.readFile(p, "utf-8");
   return JSON.parse(raw) as Snapshot;
@@ -71,6 +120,33 @@ export function supplySurges(s: Snapshot, n = 4): Producto[] {
       b.latest.masa_hoy! / b.latest.masa_7d! - a.latest.masa_hoy! / a.latest.masa_7d!,
   );
   return withVol.slice(0, n);
+}
+
+/** Anomalías ordenadas por magnitud absoluta del z-score (server-safe). */
+export function topAnomalias(s: Snapshot, n = 6): Anomalia[] {
+  const arr = s.anomalias ?? [];
+  return [...arr].sort((a, b) => Math.abs(b.z) - Math.abs(a.z)).slice(0, n);
+}
+
+/** Pronóstico de un producto, si existe (server-safe, sin null). */
+export function forecastDe(p: Producto): Forecast | null {
+  return p.forecast ?? null;
+}
+
+/**
+ * Filtro puro y server/cliente-safe: busca productos por nombre,
+ * insensible a acentos y mayúsculas. Vacío => devuelve todo.
+ */
+export function buscarProductos(productos: Producto[], q: string): Producto[] {
+  const norm = (s: string) =>
+    s
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .toLowerCase()
+      .trim();
+  const needle = norm(q);
+  if (!needle) return productos;
+  return productos.filter((p) => norm(p.nombre).includes(needle));
 }
 
 export function stats(series: Point[]) {
