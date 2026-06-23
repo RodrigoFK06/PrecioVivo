@@ -11,6 +11,8 @@ Store: Postgres/Supabase if DATABASE_URL is set, else local SQLite.
 from __future__ import annotations
 
 import argparse
+import glob
+import os
 import sys
 
 from . import harvester as H
@@ -66,6 +68,8 @@ def main(argv=None):
     ap.add_argument("--month", metavar="YYYY-MM")
     ap.add_argument("--backfill-months", type=int, metavar="N")
     ap.add_argument("--sample", metavar="PDF")
+    ap.add_argument("--reparse", action="store_true",
+                    help="re-parse cached raw PDFs in data/raw (no download) and re-load")
     ap.add_argument("--health", action="store_true", help="check source URLs are live, then exit")
     args = ap.parse_args(argv)
 
@@ -87,6 +91,20 @@ def main(argv=None):
             return 1
         n = store.upsert_precios(res.fecha, res.rows, H.FUENTE)
         print(f"OK sample {res.fecha}: {n} productos upserted ({len(res.warnings)} warn)")
+    elif args.reparse:
+        files = sorted(glob.glob(os.path.join(H.RAW_DIR, f"{H.FUENTE}_*.pdf")))
+        print(f"reparse: {len(files)} cached PDFs in {H.RAW_DIR}")
+        ok = blocked = warn = 0
+        for path in files:
+            res = parse_report(path)
+            if res.fecha is None or len(res.rows) < MIN_ROWS:
+                print(f"  BLOCKED {os.path.basename(path)}: fecha={res.fecha} rows={len(res.rows)}")
+                blocked += 1
+                continue
+            store.upsert_precios(res.fecha, res.rows, H.FUENTE)
+            ok += 1
+            warn += len(res.warnings)
+        print(f"summary: {ok} reparsed, {blocked} blocked, {warn} total warnings")
     else:
         targets = _targets(args)
         print(f"targets: {len(targets)} dailies"

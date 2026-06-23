@@ -27,6 +27,9 @@ import pdfplumber
 NAME_MAX = 232          # product-name tokens have center < this
 MASA_MIN = 180          # masa values start here; footnote markers ("1/","2/") sit left of it
 MASA_MAX = 372          # the 4 masa values sit left of the unidad text
+# The 4 masa columns are right-aligned and ~30px apart; assign by x-center band
+# (NOT by collection order) so blank missing cells don't shift the assignment.
+MASA_BANDS = (("ayer", 200, 267), ("hoy", 267, 297), ("d7", 297, 333), ("d4lun", 333, 372))
 ROW_Y_TOL = 3.0
 MISSING = {":", "-", "", "—", "·"}
 
@@ -177,11 +180,21 @@ def _parse_row(ws, chars, top, res: ParseResult):
     while i < n and _center(ws[i]) < MASA_MIN:
         i += 1
 
-    # 2) masa: next up-to-4 numeric/missing tokens left of unidad
-    masa_toks = []
-    while i < n and len(masa_toks) < 4 and _center(ws[i]) < MASA_MAX \
-            and (_is_missing(ws[i]["text"]) or _has_digit(ws[i]["text"])) and not _has_alpha(ws[i]["text"]):
-        masa_toks.append(ws[i]["text"])
+    # 2) masa: assign the 4 columns BY X-BAND, not by collection order — some
+    #    editions leave missing cells blank (no ":"), which would otherwise shift
+    #    a positional assignment and store values in the wrong column.
+    masa = {"ayer": None, "hoy": None, "d7": None, "d4lun": None}
+    masa_ambiguous = False
+    while i < n and _center(ws[i]) < MASA_MAX and not _has_alpha(ws[i]["text"]) \
+            and (_is_missing(ws[i]["text"]) or _has_digit(ws[i]["text"])):
+        c = _center(ws[i])
+        for key, lo, hi in MASA_BANDS:
+            if lo <= c < hi:
+                if masa[key] is None:
+                    masa[key] = _num(ws[i]["text"])
+                else:
+                    masa_ambiguous = True
+                break
         i += 1
 
     # 3) unidad: alpha tokens (e.g. "Kilogramo", "Atado Grande")
@@ -211,8 +224,8 @@ def _parse_row(ws, chars, top, res: ParseResult):
 
     row = ProductRow(
         producto=name,
-        masa_ayer=_num(vget(masa_toks, 0)), masa_hoy=_num(vget(masa_toks, 1)),
-        masa_7d=_num(vget(masa_toks, 2)), masa_4lun=_num(vget(masa_toks, 3)),
+        masa_ayer=masa["ayer"], masa_hoy=masa["hoy"],
+        masa_7d=masa["d7"], masa_4lun=masa["d4lun"],
         unidad=_clean_name(" ".join(unidad_toks)) or "?",
         equiv_kg=_num(vget(nums, 0)),
         precio_ayer_unit=_num(vget(nums, 1)),
@@ -220,8 +233,8 @@ def _parse_row(ws, chars, top, res: ParseResult):
         precio_7d_unit=p7,
         tendencia=tend,
     )
-    if len(masa_toks) != 4:
-        res.warnings.append(f"{name}: expected 4 masa values, got {len(masa_toks)}")
+    if masa_ambiguous:
+        res.warnings.append(f"{name}: two masa values fell in one column band")
     if row.unidad == "?":
         res.warnings.append(f"{name}: missing unidad")
     if tend is None and raw:
