@@ -19,10 +19,11 @@ dist/
 .vercel/
 *.tsbuildinfo
 
-# --- Source data (LEGAL §0.5: never re-host source PDFs/prose; keep raw files local-only) ---
-data/raw/
-data/samples/
+# --- Source data + dev DB (LEGAL §0.5: never re-host source PDFs/prose; keep local-only) ---
+data/
 *.pdf
+*.db
+*.sqlite
 
 # --- OS / editor ---
 .DS_Store
