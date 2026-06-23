@@ -1,0 +1,114 @@
+"""Ingest CLI: harvest -> parse -> load, idempotently.
+
+  python -m preciovivo.ingest --latest 5         # last 5 business days
+  python -m preciovivo.ingest --month 2026-06     # a whole month
+  python -m preciovivo.ingest --backfill-months 6 # last N months
+  python -m preciovivo.ingest --sample <pdf>      # parse+load a local PDF
+  python -m preciovivo.ingest --health            # source health check only
+
+Store: Postgres/Supabase if DATABASE_URL is set, else local SQLite.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+
+from . import harvester as H
+from .parser import parse_report
+from .store import Store
+
+MIN_ROWS = 50  # write-block gate: a full GMML report has ~67-72 products
+
+
+def _ingest_one(store: Store, daily: H.Daily) -> tuple[bool, str]:
+    path, sha, nbytes = H.download(daily)
+    store.record_raw(H.FUENTE, daily.fecha, daily.url, sha, nbytes)
+    res = parse_report(path)
+    # write-block gate (§4): never load a structurally broken report
+    if res.fecha is None or len(res.rows) < MIN_ROWS:
+        return False, (f"BLOCKED {daily.fecha}: fecha={res.fecha} rows={len(res.rows)} "
+                       f"(<{MIN_ROWS}) — not loaded")
+    if res.fecha != daily.fecha:
+        return False, f"BLOCKED {daily.fecha}: PDF self-date {res.fecha} mismatches link date"
+    n = store.upsert_precios(res.fecha, res.rows, H.FUENTE)
+    warn = f"  ({len(res.warnings)} warn)" if res.warnings else ""
+    return True, f"OK {daily.fecha}: {n} productos upserted{warn}"
+
+
+def _targets(args) -> list[H.Daily]:
+    if args.sample:
+        return []
+    if args.latest:
+        return H.latest_dailies(args.latest)
+    if args.month:
+        y, m = map(int, args.month.split("-"))
+        for mp in H.month_pages(max_sheets=4):
+            ds = H.dailies_in_month(mp)
+            if ds and ds[0].fecha.year == y and ds[0].fecha.month == m:
+                return ds
+        return []
+    if args.backfill_months:
+        out, seen = [], set()
+        for mp in H.month_pages(max_sheets=4):
+            for d in H.dailies_in_month(mp):
+                if d.fecha not in seen:
+                    seen.add(d.fecha)
+                    out.append(d)
+            if len({(d.fecha.year, d.fecha.month) for d in out}) >= args.backfill_months:
+                break
+        return sorted(out, key=lambda d: d.fecha)
+    return H.latest_dailies(3)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="Precio Vivo ingest")
+    ap.add_argument("--latest", type=int, metavar="N")
+    ap.add_argument("--month", metavar="YYYY-MM")
+    ap.add_argument("--backfill-months", type=int, metavar="N")
+    ap.add_argument("--sample", metavar="PDF")
+    ap.add_argument("--health", action="store_true", help="check source URLs are live, then exit")
+    args = ap.parse_args(argv)
+
+    if args.health:
+        mp = H.latest_month_page()
+        ds = H.dailies_in_month(mp) if mp else []
+        print(f"health: month_page={'OK' if mp else 'FAIL'}  dailies_found={len(ds)}"
+              + (f"  latest={ds[-1].fecha}" if ds else ""))
+        return 0 if ds else 1
+
+    store = Store()
+    store.init_schema()
+    print(f"store: {store.backend}")
+
+    if args.sample:
+        res = parse_report(args.sample)
+        if res.fecha is None or len(res.rows) < MIN_ROWS:
+            print(f"BLOCKED sample: fecha={res.fecha} rows={len(res.rows)}")
+            return 1
+        n = store.upsert_precios(res.fecha, res.rows, H.FUENTE)
+        print(f"OK sample {res.fecha}: {n} productos upserted ({len(res.warnings)} warn)")
+    else:
+        targets = _targets(args)
+        print(f"targets: {len(targets)} dailies"
+              + (f" ({targets[0].fecha}..{targets[-1].fecha})" if targets else ""))
+        ok = blocked = 0
+        for d in targets:
+            try:
+                good, msg = _ingest_one(store, d)
+            except Exception as e:  # noqa: BLE001 - report and continue
+                good, msg = False, f"ERROR {d.fecha}: {type(e).__name__}: {e}"
+            print(" ", msg)
+            ok += good
+            blocked += not good
+        print(f"summary: {ok} loaded, {blocked} blocked/error")
+
+    fechas = store.distinct_fechas()
+    print(f"db now: {store.count('precios_diarios')} filas precio · "
+          f"{store.count('productos')} productos · {len(fechas)} fechas"
+          + (f" ({fechas[0]}..{fechas[-1]})" if fechas else ""))
+    store.close()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

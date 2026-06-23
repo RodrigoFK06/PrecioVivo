@@ -39,7 +39,8 @@ TENDENCIAS = {
 
 NON_PRODUCT = re.compile(
     r"^(productos?|masa|precios?|promedio|unidad|equiv|ayer|hoy|"
-    r"d.as|lunes|medida|kg|.lt|total|fuente|elaborac|nota|de\b|en\b)",
+    r"d.as|medida|kg|.lt|total|fuente|elaborac|nota|de\b|en\b|"
+    r"lunes|martes|mi.rcoles|jueves|viernes|s.bado|domingo)",  # weekday in date header
     re.IGNORECASE,
 )
 
@@ -169,8 +170,8 @@ def _parse_row(ws, chars, top, res: ParseResult):
     if not name_toks:
         return
     name = _clean_name(" ".join(name_toks))
-    if len(name) < 3 or NON_PRODUCT.match(_deaccent(name)):
-        return
+    if len(name) < 3 or "," in name or NON_PRODUCT.match(_deaccent(name)):
+        return  # commas only appear in the date header, never in product names
 
     # skip footnote markers ("1/", "2/") that sit in the gap before the masa block
     while i < n and _center(ws[i]) < MASA_MIN:
