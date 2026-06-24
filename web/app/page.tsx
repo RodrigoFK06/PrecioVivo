@@ -38,8 +38,8 @@ function Stat({
   return (
     <div className="px-4 py-4 sm:px-5">
       <div
-        className={`font-serif text-3xl sm:text-4xl leading-none tabular-nums ${
-          accent ? "text-accent" : "text-ink"
+        className={`text-3xl sm:text-4xl font-semibold tracking-tight leading-none tabular-nums ${
+          accent ? "text-down" : "text-ink"
         }`}
       >
         {figure}
@@ -50,22 +50,21 @@ function Stat({
 }
 
 function Seccion({
-  label,
   titulo,
   bajada,
   children,
 }: {
-  label: string;
   titulo: string;
   bajada?: string;
   children: React.ReactNode;
 }) {
   return (
-    <section className="mb-14">
-      <div className="border-t-2 border-ink/85 pt-3 mb-6">
-        <p className="eyebrow">{label}</p>
-        <h2 className="font-serif text-2xl sm:text-3xl text-ink mt-1">{titulo}</h2>
-        {bajada && <p className="mt-1.5 text-sm text-muted max-w-2xl leading-relaxed">{bajada}</p>}
+    <section className="mb-16">
+      <div className="border-t border-rule-strong pt-4 mb-6">
+        <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight text-ink">{titulo}</h2>
+        {bajada && (
+          <p className="mt-1.5 text-[15px] text-muted max-w-2xl leading-relaxed">{bajada}</p>
+        )}
       </div>
       {children}
     </section>
@@ -136,7 +135,7 @@ export default async function Home() {
           <FreshnessBadge latestFecha={snap.latestFecha} generatedAt={snap.generatedAt} />
         </div>
 
-        <h1 className="font-serif text-4xl sm:text-5xl lg:text-6xl leading-[1.05] text-ink mt-3 max-w-3xl">
+        <h1 className="text-4xl sm:text-5xl lg:text-6xl font-semibold tracking-[-0.03em] leading-[1.04] text-ink mt-3 max-w-3xl">
           Los precios del mercado, leídos con IA
         </h1>
         <p className="mt-4 text-lg text-muted max-w-2xl leading-relaxed">
@@ -146,7 +145,7 @@ export default async function Home() {
             {modeloIA.iaGana} de {modeloIA.conForecast}
           </span>{" "}
           productos, con{" "}
-          <span className="text-accent font-medium tabular-nums">
+          <span className="text-down font-medium tabular-nums">
             ~{Math.round(modeloIA.mejoraMediaPct)}% menos error
           </span>
           . Lo probamos en público — y decimos también qué no funciona.
@@ -176,8 +175,7 @@ export default async function Home() {
 
       {/* ── HOY ─────────────────────────────────────────────────────── */}
       <Seccion
-        label="El día de hoy"
-        titulo="Resumen y consulta"
+        titulo="El día de hoy"
         bajada="Resumen automático del mercado y consulta en lenguaje natural sobre los precios."
       >
         <div className="grid gap-5 lg:grid-cols-2 items-start">
@@ -192,8 +190,7 @@ export default async function Home() {
 
       {/* ── MOVIMIENTOS ─────────────────────────────────────────────── */}
       <Seccion
-        label="Movimientos del día"
-        titulo="Qué subió, qué bajó"
+        titulo="Movimientos del día"
         bajada="Las mayores variaciones de precio frente a ayer y dónde entró más volumen al mercado."
       >
         <div data-guia="movers" className="grid gap-8 md:grid-cols-3">
@@ -205,7 +202,6 @@ export default async function Home() {
 
       {/* ── PRODUCTOS ───────────────────────────────────────────────── */}
       <Seccion
-        label="La tabla"
         titulo="Todos los productos"
         bajada={`${snap.productCount} productos en S/ por kg — variación, tendencia, ingreso del día y predicción con IA. Busca o desplázate dentro de la tabla.`}
       >
@@ -216,7 +212,6 @@ export default async function Home() {
 
       {/* ── COMPARADOR ──────────────────────────────────────────────── */}
       <Seccion
-        label="Explorar"
         titulo="Comparar productos"
         bajada="Superpone la evolución de precio de varios productos a lo largo del tiempo."
       >
@@ -225,7 +220,6 @@ export default async function Home() {
 
       {/* ── ALERTAS ─────────────────────────────────────────────────── */}
       <Seccion
-        label="Vigilancia"
         titulo="Alertas del día"
         bajada="Variaciones fuertes y anomalías estadísticas sobre el último día. Marca tu watchlist."
       >
@@ -234,7 +228,6 @@ export default async function Home() {
 
       {/* ── METODOLOGÍA + DATOS ─────────────────────────────────────── */}
       <Seccion
-        label="Cómo lo hacemos"
         titulo="Metodología y datos"
         bajada="Qué funciona, qué no, y los datos crudos para descargar."
       >

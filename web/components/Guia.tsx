@@ -67,10 +67,13 @@ export default function Guia() {
   const [paso, setPaso] = useState(0);
   const [rect, setRect] = useState<DOMRect | null>(null);
 
-  // Primera visita: ofrece el tour automáticamente (una sola vez).
+  // Primera visita: ofrece el tour automáticamente (una sola vez). La detección
+  // necesita localStorage (solo cliente), así que el setState va en el efecto de
+  // montaje a propósito — no es un sync derivable en render (rompería SSR/hidratación).
   useEffect(() => {
     try {
       if (!localStorage.getItem(VISTA_KEY)) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setModo("tour");
         setPaso(0);
       }
@@ -88,17 +91,14 @@ export default function Guia() {
     }
   }, []);
 
-  // Posiciona el spotlight sobre el objetivo del paso actual.
+  // Posiciona el spotlight sobre el objetivo del paso actual. Todo el setState
+  // ocurre dentro de `medir` (timeout/resize), no sincrónico en el cuerpo del efecto.
   useEffect(() => {
     if (modo !== "tour") return;
     const el = document.querySelector(PASOS[paso]?.sel ?? "");
-    if (!el) {
-      setRect(null);
-      return;
-    }
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
-    const medir = () => setRect(el.getBoundingClientRect());
-    const t = setTimeout(medir, 320);
+    const medir = () => setRect(el ? el.getBoundingClientRect() : null);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    const t = setTimeout(medir, el ? 320 : 0);
     window.addEventListener("resize", medir);
     return () => {
       clearTimeout(t);

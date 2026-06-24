@@ -1,23 +1,29 @@
 @import "tailwindcss";
 
-/* ── Editorial "diario de mercado" design tokens ─────────────────────────
-   Serif headlines (Fraunces), warm paper ground, ink text, hairline rules,
-   deep red/green for price moves. Killing the generic slate/emerald card-soup. */
+/* ── Design tokens ──────────────────────────────────────────────────────
+   Anti-slop, per the design skills: NO Fraunces/serif-display (named AI tell),
+   NO warm cream/beige paper (banned premium-consumer palette). Instead: clean
+   near-monochrome (neutral off-white + near-black) with red/green ONLY as price
+   semantics. One sans family (Geist) used as display. Craft: ease-out + press. */
 @theme {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-  --font-serif: var(--font-fraunces);
+  /* "serif" kept as a token name for compatibility, but mapped to the sans
+     display — we deliberately do NOT ship a display serif. */
+  --font-serif: var(--font-geist-sans);
 
-  --color-paper: #f6f3ea; /* warm newsprint ground */
-  --color-card: #fffefa; /* faint raised surface */
-  --color-ink: #1b1a15; /* near-black, warm */
-  --color-muted: #6c6858; /* secondary text */
-  --color-faint: #918b79; /* tertiary / captions */
-  --color-rule: #e2dccd; /* hairline */
-  --color-rule-strong: #cbc4b1; /* heavier rule */
-  --color-up: #a72a18; /* precio sube = rojo profundo */
-  --color-down: #1c7a47; /* precio baja = verde profundo */
-  --color-accent: #15402a; /* brand: verde tinta */
+  --color-paper: #f7f7f8; /* cool near-white page ground (not cream) */
+  --color-card: #ffffff; /* clean white panels */
+  --color-ink: #0c0c0d; /* near-black */
+  --color-muted: #52525b; /* zinc-600 secondary text */
+  --color-faint: #a1a1aa; /* zinc-400 tertiary / captions */
+  --color-rule: #e8e8eb; /* hairline */
+  --color-rule-strong: #d6d6da; /* heavier rule */
+  --color-up: #dc2626; /* precio sube = rojo (semántica financiera) */
+  --color-down: #16a34a; /* precio baja / positivo = verde */
+  --color-accent: #2f2f33; /* monochrome interactive tone (hover/press) */
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 body {
@@ -28,37 +34,54 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* Titulares serif con tracking ceñido (look editorial). */
+/* Display headings: tight sans tracking (we dropped the serif). */
 .font-serif {
-  font-feature-settings: "ss01";
-  letter-spacing: -0.01em;
+  letter-spacing: -0.022em;
 }
 
-/* Etiqueta de sección tipo cabecera de diario. */
+/* Section label — used sparingly (eyebrow restraint: ≤1 per ~3 sections). */
 .eyebrow {
-  font-family: var(--font-sans), system-ui, sans-serif;
   text-transform: uppercase;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.12em;
   font-size: 0.6875rem;
   font-weight: 600;
   color: var(--color-faint);
 }
 
-::selection {
-  background-color: rgba(21, 64, 42, 0.16);
+/* Craft (Emil): strong ease-out + subtle press feedback on every button. */
+button {
+  transition:
+    transform 140ms var(--ease-out),
+    background-color 140ms var(--ease-out),
+    border-color 140ms var(--ease-out),
+    color 140ms var(--ease-out),
+    opacity 140ms var(--ease-out);
+}
+button:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 a:focus-visible,
 button:focus-visible,
 input:focus-visible,
 [tabindex]:focus-visible {
-  outline: 2px solid var(--color-accent);
+  outline: 2px solid var(--color-ink);
   outline-offset: 2px;
   border-radius: 2px;
+}
+
+::selection {
+  background-color: rgba(12, 12, 13, 0.12);
 }
 
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
+  }
+  button {
+    transition: none;
+  }
+  button:active {
+    transform: none;
   }
 }
