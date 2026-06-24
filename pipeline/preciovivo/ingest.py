@@ -251,6 +251,7 @@ def main(argv=None):
         db_path = store.backend.split("sqlite:", 1)[1] if store.backend.startswith("sqlite:") \
             else os.environ.get("PRECIOVIVO_DB", "../data/preciovivo.db")
         res = F.forecast_all(db_path)
+        F.save_cache(res, db_path)  # export lo reutiliza sin recomputar el GBM
         por = res.get("por_slug", {})
         kg = res.get("kill_gate", {})
         items = list(por.items())

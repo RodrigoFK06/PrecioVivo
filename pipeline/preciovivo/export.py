@@ -125,7 +125,7 @@ def _add_forecast(snapshot: dict, productos: list[dict], db_path: str) -> None:
     """
     try:
         from . import forecast as F
-        res = F.forecast_all(db_path)
+        res = F.forecast_all_cached(db_path)  # lee el cache de `ingest --forecast`; no recomputa el GBM
         por = res.get("por_slug", {})
         for p in productos:
             fc = por.get(p["nombre"])

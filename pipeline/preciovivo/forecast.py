@@ -874,6 +874,41 @@ def _forecast_7d(series_por_prod: dict[str, list[dict]]) -> dict[str, dict]:
             for nombre, series in series_por_prod.items()}
 
 
+def _cache_path(db_path: str) -> str:
+    import os
+    return os.path.join(os.path.dirname(os.path.abspath(db_path)), "forecast_cache.json")
+
+
+def save_cache(res: dict, db_path: str = "../data/preciovivo.db") -> None:
+    """Persiste el resultado de forecast_all junto a la BD (para que export NO lo
+    recompute: el GBM walk-forward son varios minutos)."""
+    import json
+    try:
+        with open(_cache_path(db_path), "w", encoding="utf-8") as f:
+            json.dump(res, f, ensure_ascii=False)
+    except OSError:
+        pass
+
+
+def forecast_all_cached(db_path: str = "../data/preciovivo.db") -> dict:
+    """forecast_all, pero sirviendo el cache si existe (lo escribe `ingest --forecast`).
+
+    El flujo diario es ingest --forecast (calcula+cachea) -> export (lee cache). Si
+    no hay cache, calcula y lo guarda (degradación correcta, solo más lento)."""
+    import json
+    import os
+    p = _cache_path(db_path)
+    if os.path.exists(p):
+        try:
+            with open(p, encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            pass
+    res = forecast_all(db_path)
+    save_cache(res, db_path)
+    return res
+
+
 def forecast_all(db_path: str = "../data/preciovivo.db") -> dict:
     """Pronostica todos los productos y corre los kill-gates honestos.
 

@@ -290,6 +290,10 @@ def test_evaluate_sobre_db_local_si_existe():
     db = os.environ.get("PRECIOVIVO_DB", "../data/preciovivo.db")
     if not os.path.exists(db):
         pytest.skip(f"BD local no encontrada: {db}")
+    if not os.environ.get("PRECIOVIVO_SLOW_TESTS"):
+        # evaluate(db) reconstruye el snapshot (corre el forecast GBM, varios
+        # minutos con 2 años). Costoso: se omite por defecto.
+        pytest.skip("test lento de integración; exporta PRECIOVIVO_SLOW_TESTS=1")
     monkey = os.environ.pop("ANTHROPIC_API_KEY", None)
     try:
         alertas = evaluate(db)  # usa DEFAULT_REGLAS
