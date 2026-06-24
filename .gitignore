@@ -20,7 +20,9 @@ dist/
 *.tsbuildinfo
 
 # --- Source data + dev DB (LEGAL §0.5: never re-host source PDFs/prose; keep local-only) ---
-data/
+# Only the repo-root data/ (raw PDFs + dev SQLite). web/data/snapshot.json — derived
+# numeric facts (legal-safe) — IS tracked so Vercel can build the live site.
+/data/
 *.pdf
 *.db
 *.sqlite

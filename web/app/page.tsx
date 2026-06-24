@@ -124,6 +124,22 @@ export default async function Home() {
   const nUp = snap.productos.filter((p) => (p.latest.var_pct ?? 0) > 0).length;
   const nDown = snap.productos.filter((p) => (p.latest.var_pct ?? 0) < 0).length;
 
+  // Aligerar el payload al cliente: cada componente recibe SOLO la resolución de
+  // serie que necesita. La serie completa de 2 años vive en /p/[slug] (server).
+  const recorta = (p: Producto, n: number): Producto =>
+    p.series.length <= n ? p : { ...p, series: p.series.slice(-n) };
+  const submuestrea = (p: Producto, max: number): Producto => {
+    if (p.series.length <= max) return p;
+    const paso = Math.ceil(p.series.length / max);
+    const s = p.series.filter((_, i) => i % paso === 0);
+    const ultimo = p.series[p.series.length - 1];
+    if (s[s.length - 1] !== ultimo) s.push(ultimo);
+    return { ...p, series: s };
+  };
+  const productosTabla = productos.map((p) => recorta(p, 30)); // sparkline 30d
+  const productosComparador = snap.productos.map((p) => submuestrea(p, 140)); // tendencia 2a
+  const productosLigeros = snap.productos.map((p) => ({ ...p, series: [] })); // solo nombre/slug
+
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:py-14">
       {/* ── HERO editorial ──────────────────────────────────────────── */}
@@ -206,7 +222,7 @@ export default async function Home() {
         bajada={`${snap.productCount} productos en S/ por kg — variación, tendencia, ingreso del día y predicción con IA. Busca o desplázate dentro de la tabla.`}
       >
         <div data-guia="tabla">
-          <ProductTable productos={productos} />
+          <ProductTable productos={productosTabla} />
         </div>
       </Seccion>
 
@@ -215,7 +231,7 @@ export default async function Home() {
         titulo="Comparar productos"
         bajada="Superpone la evolución de precio de varios productos a lo largo del tiempo."
       >
-        <Comparador productos={snap.productos} />
+        <Comparador productos={productosComparador} />
       </Seccion>
 
       {/* ── ALERTAS ─────────────────────────────────────────────────── */}
@@ -223,7 +239,7 @@ export default async function Home() {
         titulo="Alertas del día"
         bajada="Variaciones fuertes y anomalías estadísticas sobre el último día. Marca tu watchlist."
       >
-        <AlertasWatchlist alertas={alertas} productos={snap.productos} />
+        <AlertasWatchlist alertas={alertas} productos={productosLigeros} />
       </Seccion>
 
       {/* ── METODOLOGÍA + DATOS ─────────────────────────────────────── */}
