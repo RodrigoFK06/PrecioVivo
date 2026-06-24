@@ -274,11 +274,18 @@ def test_contrato_kill_gate():
 # =============================================================================
 
 def test_forecast_all_sobre_db_local_si_existe():
-    """Si la BD local existe, forecast_all devuelve la estructura completa."""
+    """Si la BD local existe, forecast_all devuelve la estructura completa.
+
+    Integración costosa (corre el GBM walk-forward sobre toda la BD real, varios
+    minutos con 2 años de data). Se omite por defecto; actívala con
+    PRECIOVIVO_SLOW_TESTS=1 para correr el e2e completo.
+    """
+    import pytest
     db = os.environ.get("PRECIOVIVO_DB", os.path.join(_PIPELINE, "..", "data", "preciovivo.db"))
     if not os.path.exists(db):
-        import pytest
         pytest.skip(f"BD local no encontrada en {db}")
+    if not os.environ.get("PRECIOVIVO_SLOW_TESTS"):
+        pytest.skip("test lento de integración; exporta PRECIOVIVO_SLOW_TESTS=1 para correrlo")
     res = F.forecast_all(db)
     assert set(res) == {"por_slug", "kill_gate"}
     assert len(res["por_slug"]) > 0

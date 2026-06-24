@@ -244,21 +244,41 @@ def _gbm_fit_predict(
     return float(model.predict(np.asarray([feats_pred], float))[0])
 
 
+MAX_FOLDS = 60  # tope de orígenes por walk-forward (rendimiento). >~60 pliegues no
+                # cambian materialmente el MAE estimado pero multiplican el costo del
+                # GBM, que se re-ajusta en cada origen. El submuestreo es UNIFORME y
+                # cubre TODA la serie (no solo lo reciente); el anti-leakage se mantiene
+                # intacto: cada origen evaluado sigue usando solo fecha<=t.
+
+
+def _eval_origins(inicio: int, n: int, h: int) -> list[int]:
+    """Orígenes de evaluación walk-forward, capados a MAX_FOLDS (submuestreo uniforme)."""
+    fin = n - h
+    if inicio >= fin:
+        return []
+    todos = list(range(inicio, fin))
+    if len(todos) <= MAX_FOLDS:
+        return todos
+    paso = len(todos) / MAX_FOLDS
+    return [todos[int(k * paso)] for k in range(MAX_FOLDS)]
+
+
 def _walk_forward_mae_gbm(
     y: np.ndarray, fechas: list[date], h: int
 ) -> tuple[float, int]:
     """MAE walk-forward de ventana expansiva del GBM, para el horizonte h.
 
-    En cada origen t (desde max(WARMUP-1, GBM_WARMUP) hasta n-1-h) se RE-AJUSTA el
-    GBM con SOLO fecha<=t y se predice y[t+h]. Re-ajustar en cada origen es lo que
-    garantiza el anti-leakage: ningún parámetro del modelo vio el futuro.
+    En cada origen t (desde max(WARMUP-1, GBM_WARMUP) hasta n-1-h, capado a MAX_FOLDS)
+    se RE-AJUSTA el GBM con SOLO fecha<=t y se predice y[t+h]. Re-ajustar en cada
+    origen es lo que garantiza el anti-leakage: ningún parámetro del modelo vio el
+    futuro.
 
     Devuelve (mae, n_pliegues). (nan, 0) si no hubo pliegues.
     """
     n = len(y)
     inicio = max(WARMUP - 1, GBM_WARMUP, max(_lags_para_horizonte(h)))
     errs = []
-    for t in range(inicio, n - h):
+    for t in _eval_origins(inicio, n, h):
         yhat = _gbm_fit_predict(y, fechas, t, h)
         if yhat is None:
             continue
@@ -283,7 +303,7 @@ def _walk_forward_mae(y: np.ndarray, pred_fn, h: int = HORIZONTE_DIAS) -> tuple[
     """
     n = len(y)
     errs = []
-    for t in range(WARMUP - 1, n - h):
+    for t in _eval_origins(WARMUP - 1, n, h):
         hist = y[: t + 1]              # SOLO pasado y presente (fecha<=t)
         yhat = pred_fn(hist, h)
         ytrue = y[t + h]
@@ -311,7 +331,7 @@ def _walk_forward_mae_lineal(
     """
     n = len(y)
     errs = []
-    for t in range(WARMUP - 1, n - h):
+    for t in _eval_origins(WARMUP - 1, n, h):
         # dataset de entrenamiento con features rezagadas h pasos, fecha<=t.
         # fila i (i en h..t): target=y[i], feats=[y[i-h], (vol[i-h]), 1]
         idx = np.arange(h, t + 1)
@@ -385,13 +405,13 @@ def _intervalo(y: np.ndarray, fechas: list[date], metodo: str, punto: float,
     errs = []
     if metodo == "gbm":
         inicio = max(WARMUP - 1, GBM_WARMUP, max(_lags_para_horizonte(h)))
-        for t in range(inicio, n - h):
+        for t in _eval_origins(inicio, n, h):
             yhat = _gbm_fit_predict(y, fechas, t, h)
             if yhat is not None:
                 errs.append(yhat - float(y[t + h]))
     else:
         fn = _MODELOS[metodo]
-        for t in range(WARMUP - 1, n - h):
+        for t in _eval_origins(WARMUP - 1, n, h):
             errs.append(fn(y[: t + 1], h) - y[t + h])
     if not errs:
         return (round(punto, 4), round(punto, 4))
