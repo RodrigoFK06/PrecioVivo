@@ -69,10 +69,10 @@ export default function ProductTable({ productos }: { productos: Producto[] }) {
     key === sortKey ? (sortDir === "asc" ? "ascending" : "descending") : "none";
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+    <div className="rounded-sm border border-rule bg-card overflow-hidden">
       {/* Cabecera con búsqueda en vivo */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-200 bg-slate-50/60">
-        <h2 className="text-sm font-semibold">Todos los productos</h2>
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-rule bg-ink/[0.025]">
+        <h2 className="font-serif text-base text-ink">Todos los productos</h2>
         <div className="flex items-center gap-3">
           <label htmlFor="buscar-producto" className="sr-only">
             Buscar producto
@@ -85,9 +85,9 @@ export default function ProductTable({ productos }: { productos: Producto[] }) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Buscar producto…"
-            className="w-44 sm:w-56 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm placeholder:text-slate-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            className="w-44 sm:w-56 rounded-sm border border-rule bg-card px-3 py-1.5 text-sm placeholder:text-faint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           />
-          <span className="text-xs tabular-nums text-slate-400" aria-live="polite">
+          <span className="text-xs tabular-nums text-faint" aria-live="polite">
             {filtradas.length} de {productos.length}
           </span>
         </div>
@@ -99,8 +99,8 @@ export default function ProductTable({ productos }: { productos: Producto[] }) {
             Precios mayoristas por kg, variación frente a ayer, tendencia, ingreso del día y
             pronóstico beta por producto.
           </caption>
-          <thead className="sticky top-0 z-10 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80">
-            <tr className="text-left text-xs text-slate-400 border-b border-slate-200">
+          <thead className="sticky top-0 z-10 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
+            <tr className="text-left text-xs text-faint border-b border-rule">
               {COLUMNS.map((c) => (
                 <th
                   key={c.key}
@@ -111,9 +111,9 @@ export default function ProductTable({ productos }: { productos: Producto[] }) {
                   <button
                     type="button"
                     onClick={() => toggleSort(c.key)}
-                    className={`inline-flex items-center gap-1 hover:text-slate-700 ${
+                    className={`inline-flex items-center gap-1 hover:text-ink ${
                       c.align === "right" ? "flex-row-reverse" : ""
-                    } ${c.key === sortKey ? "text-slate-700" : ""}`}
+                    } ${c.key === sortKey ? "text-ink" : ""}`}
                   >
                     <span>{c.label}</span>
                     <span aria-hidden className="w-2 text-[9px]">
@@ -130,8 +130,8 @@ export default function ProductTable({ productos }: { productos: Producto[] }) {
                   type="button"
                   onClick={() => toggleSort("ingreso")}
                   aria-pressed={sortKey === "ingreso"}
-                  className={`inline-flex flex-row-reverse items-center gap-1 hover:text-slate-700 ${
-                    sortKey === "ingreso" ? "text-slate-700" : ""
+                  className={`inline-flex flex-row-reverse items-center gap-1 hover:text-ink ${
+                    sortKey === "ingreso" ? "text-ink" : ""
                   }`}
                 >
                   <span>Ingreso hoy</span>
@@ -143,7 +143,7 @@ export default function ProductTable({ productos }: { productos: Producto[] }) {
               <th scope="col" className="px-4 py-2 font-medium text-right">
                 <span className="inline-flex items-center gap-1.5">
                   Pronóstico
-                  <span className="rounded bg-slate-100 px-1 py-0.5 text-[9px] uppercase tracking-wide text-slate-500">
+                  <span className="rounded-sm bg-ink/[0.05] px-1 py-0.5 text-[9px] uppercase tracking-wide text-muted">
                     beta
                   </span>
                 </span>
@@ -157,15 +157,15 @@ export default function ProductTable({ productos }: { productos: Producto[] }) {
             {filtradas.map((p) => {
               const fc = p.forecast;
               return (
-                <tr key={p.slug} className="border-b border-slate-50 hover:bg-emerald-50/40 transition-colors">
+                <tr key={p.slug} className="border-b border-rule hover:bg-accent/[0.04] transition-colors">
                   <td className="px-4 py-2">
                     <Link
                       href={`/p/${p.slug}`}
-                      className="font-medium text-slate-700 hover:text-emerald-600 hover:underline"
+                      className="font-medium text-ink hover:text-accent hover:underline"
                     >
                       {p.nombre}
                     </Link>
-                    <span className="ml-1.5 text-xs text-slate-400">
+                    <span className="ml-1.5 text-xs text-faint">
                       /{p.unidad.toLowerCase()}
                     </span>
                   </td>
@@ -190,10 +190,10 @@ export default function ProductTable({ productos }: { productos: Producto[] }) {
                       {p.latest.tendencia ?? "—"}
                     </span>
                   </td>
-                  <td className="px-4 py-2 text-right tabular-nums text-slate-500">
+                  <td className="px-4 py-2 text-right tabular-nums text-muted">
                     {tons(p.latest.masa_hoy)}
                   </td>
-                  <td className="px-4 py-2 text-right tabular-nums text-slate-500">
+                  <td className="px-4 py-2 text-right tabular-nums text-muted">
                     {fc ? (
                       <span
                         title={`Estimado a ${fc.horizonte_dias} día(s) · método ${fc.metodo} · rango S/ ${fc.intervalo[0].toFixed(
@@ -203,7 +203,7 @@ export default function ProductTable({ productos }: { productos: Producto[] }) {
                         {soles(fc.precio_estimado)}
                       </span>
                     ) : (
-                      <span className="text-slate-300">—</span>
+                      <span className="text-faint">—</span>
                     )}
                   </td>
                   <td className="px-4 py-2">
@@ -214,7 +214,7 @@ export default function ProductTable({ productos }: { productos: Producto[] }) {
             })}
             {filtradas.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-sm text-slate-400">
+                <td colSpan={7} className="px-4 py-8 text-center text-sm text-faint">
                   No hay productos que coincidan con «{query}».
                 </td>
               </tr>

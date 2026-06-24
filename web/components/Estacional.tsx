@@ -30,9 +30,9 @@ export default function Estacional({ producto }: Props) {
 
   if (!est || conDato.length === 0) {
     return (
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-sm font-semibold mb-2">Estacionalidad</h2>
-        <p className="text-slate-500 text-sm leading-relaxed">
+      <div className="rounded-sm border border-rule bg-card p-5">
+        <h2 className="font-serif text-base text-ink mb-2">Estacionalidad</h2>
+        <p className="text-muted text-sm leading-relaxed">
           Todavía no hay suficiente historia de {producto.nombre} para comparar su
           precio de hoy con su mismo mes en años anteriores.
         </p>
@@ -54,11 +54,11 @@ export default function Estacional({ producto }: Props) {
 
   const masCaro = desviacionPct > 0;
   const direccion = masCaro ? "por encima" : "por debajo";
-  // Más caro = rose (malo para el bolsillo); más barato = emerald.
-  const tono = masCaro ? "text-rose-600" : "text-emerald-600";
+  // Más caro = up (rojo, malo para el bolsillo); más barato = down (verde).
+  const tono = masCaro ? "text-up" : "text-down";
   const chipTono = masCaro
-    ? "bg-rose-50 text-rose-700"
-    : "bg-emerald-50 text-emerald-700";
+    ? "bg-up/10 text-up"
+    : "bg-down/10 text-down";
 
   // --- Mini gráfico de barras (promedio histórico por mes) ---
   const W = 320;
@@ -75,12 +75,12 @@ export default function Estacional({ producto }: Props) {
   const barW = slot * 0.62;
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+    <div className="rounded-sm border border-rule bg-card p-5 sm:p-6">
       <div className="flex flex-wrap items-center gap-2 mb-2">
-        <h2 className="text-sm font-semibold">Estacionalidad</h2>
+        <h2 className="font-serif text-base text-ink">Estacionalidad</h2>
         {soloUnAnio && (
           <span
-            className="text-[10px] uppercase tracking-wide rounded bg-slate-100 text-slate-500 px-1.5 py-0.5"
+            className="text-[10px] uppercase tracking-wide rounded-sm bg-ink/[0.05] text-muted px-1.5 py-0.5"
             title="Aún no hay un año anterior completo de este mes; la referencia usa solo el año en curso."
           >
             historia limitada
@@ -88,19 +88,19 @@ export default function Estacional({ producto }: Props) {
         )}
       </div>
 
-      <p className="text-slate-700 leading-relaxed text-[15px]">
-        <span className="font-medium text-slate-900">{producto.nombre}</span> está{" "}
+      <p className="text-ink leading-relaxed text-[15px]">
+        <span className="font-medium text-ink">{producto.nombre}</span> está{" "}
         <span className={`font-semibold tabular-nums ${tono}`}>
           {pct(desviacionPct)}
         </span>{" "}
         {direccion} de su {mesNombre} histórico{" "}
-        <span className="text-slate-500 tabular-nums">
+        <span className="text-muted tabular-nums">
           ({soles(actual)} vs {soles(promedio)})
         </span>
         .
       </p>
       {soloUnAnio && (
-        <p className="mt-1.5 text-xs text-slate-500 leading-relaxed">
+        <p className="mt-1.5 text-xs text-muted leading-relaxed">
           Nota: por ahora el promedio de {mesNombre} se calcula solo con el año en
           curso. La comparación entre años gana sentido cuando acumulemos otro{" "}
           {mesNombre}.
@@ -108,7 +108,7 @@ export default function Estacional({ producto }: Props) {
       )}
 
       <div className="mt-4">
-        <div className="text-[11px] uppercase tracking-wide text-slate-400 mb-1">
+        <div className="text-[11px] uppercase tracking-wide text-faint mb-1">
           Promedio histórico por mes (S/ por kg)
         </div>
         <svg
@@ -129,14 +129,14 @@ export default function Estacional({ producto }: Props) {
                     y1={padT + chartH}
                     x2={cx + barW / 2}
                     y2={padT + chartH}
-                    stroke="#e2e8f0"
+                    stroke="#e2dccd"
                     strokeWidth={2}
                   />
                   <text
                     x={cx}
                     y={H - 5}
                     textAnchor="middle"
-                    className="fill-slate-300"
+                    className="fill-faint"
                     fontSize="9"
                   >
                     {MESES_CORTO[i]}
@@ -146,7 +146,7 @@ export default function Estacional({ producto }: Props) {
             }
             const h = Math.max(2, ((v - base) / span) * chartH);
             const y = padT + chartH - h;
-            const fill = vigente ? "#059669" : "#cbd5e1";
+            const fill = vigente ? "#15402a" : "#cbc4b1";
             return (
               <g key={i}>
                 <rect
@@ -166,7 +166,7 @@ export default function Estacional({ producto }: Props) {
                   x={cx}
                   y={H - 5}
                   textAnchor="middle"
-                  className={vigente ? "fill-emerald-700 font-semibold" : "fill-slate-400"}
+                  className={vigente ? "fill-accent font-semibold" : "fill-faint"}
                   fontSize="9"
                 >
                   {MESES_CORTO[i]}
@@ -175,13 +175,13 @@ export default function Estacional({ producto }: Props) {
             );
           })}
         </svg>
-        <div className="mt-1 flex items-center gap-3 text-[11px] text-slate-400">
+        <div className="mt-1 flex items-center gap-3 text-[11px] text-faint">
           <span className="inline-flex items-center gap-1">
-            <span className="inline-block h-2 w-2 rounded-sm bg-emerald-600" />
+            <span className="inline-block h-2 w-2 rounded-sm bg-accent" />
             {mesNombre} (vigente)
           </span>
           <span className="inline-flex items-center gap-1">
-            <span className="inline-block h-2 w-2 rounded-sm bg-slate-300" />
+            <span className="inline-block h-2 w-2 rounded-sm bg-rule-strong" />
             otros meses
           </span>
         </div>

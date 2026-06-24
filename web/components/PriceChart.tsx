@@ -17,7 +17,7 @@ export default function PriceChart({ series }: Props) {
   const pts = series
     .map((p, i) => ({ ...p, i }))
     .filter((p): p is Point & { i: number; precio_kg: number } => p.precio_kg != null);
-  if (pts.length < 2) return <div className="text-slate-400 text-sm">Sin datos suficientes.</div>;
+  if (pts.length < 2) return <div className="text-faint text-sm">Sin datos suficientes.</div>;
 
   const n = series.length - 1;
   const prices = pts.map((p) => p.precio_kg);
@@ -46,23 +46,23 @@ export default function PriceChart({ series }: Props) {
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Serie de precio">
       <defs>
         <linearGradient id="pv-area" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#10b981" stopOpacity="0.18" />
-          <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
+          <stop offset="0%" stopColor="#15402a" stopOpacity="0.14" />
+          <stop offset="100%" stopColor="#15402a" stopOpacity="0" />
         </linearGradient>
       </defs>
 
       {gridVals.map((v, k) => (
         <g key={k}>
-          <line x1={padL} y1={yP(v)} x2={W - padR} y2={yP(v)} stroke="#e2e8f0" strokeWidth={1} />
-          <text x={padL - 6} y={yP(v) + 3} textAnchor="end" className="fill-slate-400" fontSize="10">
+          <line x1={padL} y1={yP(v)} x2={W - padR} y2={yP(v)} stroke="#e2dccd" strokeWidth={1} />
+          <text x={padL - 6} y={yP(v) + 3} textAnchor="end" className="fill-faint" fontSize="10">
             {v.toFixed(2)}
           </text>
         </g>
       ))}
 
       <path d={area} fill="url(#pv-area)" />
-      <path d={line} fill="none" stroke="#059669" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
-      <circle cx={x(last.i)} cy={yP(last.precio_kg)} r={3.5} fill="#059669" />
+      <path d={line} fill="none" stroke="#15402a" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={x(last.i)} cy={yP(last.precio_kg)} r={3.5} fill="#15402a" />
 
       {/* volume bars */}
       {series.map((p, i) =>
@@ -73,17 +73,17 @@ export default function PriceChart({ series }: Props) {
             y={volTop + volH - (p.masa_hoy / maxVol) * volH}
             width={2.8}
             height={(p.masa_hoy / maxVol) * volH}
-            fill="#cbd5e1"
+            fill="#cbc4b1"
             rx={0.5}
           />
         ) : null,
       )}
-      <text x={padL - 6} y={volTop + 8} textAnchor="end" className="fill-slate-400" fontSize="9">
+      <text x={padL - 6} y={volTop + 8} textAnchor="end" className="fill-faint" fontSize="9">
         t
       </text>
 
       {ticks.map((ti, k) => (
-        <text key={k} x={x(ti)} y={H - 2} textAnchor="middle" className="fill-slate-400" fontSize="10">
+        <text key={k} x={x(ti)} y={H - 2} textAnchor="middle" className="fill-faint" fontSize="10">
           {series[ti] ? fechaCorta(series[ti].fecha) : ""}
         </text>
       ))}

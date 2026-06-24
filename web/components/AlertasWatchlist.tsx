@@ -34,27 +34,27 @@ const TIPO_META: Record<
   string,
   { etiqueta: string; clase: string }
 > = {
-  var_pct: { etiqueta: "Variación", clase: "bg-amber-50 text-amber-700" },
-  anomalia: { etiqueta: "Anomalía", clase: "bg-sky-50 text-sky-700" },
-  nivel: { etiqueta: "Nivel", clase: "bg-violet-50 text-violet-700" },
+  var_pct: { etiqueta: "Variación", clase: "bg-ink/[0.06] text-muted" },
+  anomalia: { etiqueta: "Anomalía", clase: "bg-ink/[0.06] text-muted" },
+  nivel: { etiqueta: "Nivel", clase: "bg-ink/[0.06] text-muted" },
 };
 
 function metaDe(tipo: string) {
-  return TIPO_META[tipo] ?? { etiqueta: tipo, clase: "bg-slate-100 text-slate-500" };
+  return TIPO_META[tipo] ?? { etiqueta: tipo, clase: "bg-ink/[0.06] text-muted" };
 }
 
 /**
- * Color del badge de `valor`. Para variaciones, más caro = rose y más barato =
- * emerald (convención del proyecto). Para anomalías el signo del z es neutro
- * informativo (sky). Resto: slate.
+ * Color del badge de `valor`. Para variaciones, más caro = up (rojo) y más barato =
+ * down (verde), convención del proyecto. Para anomalías el signo del z es neutro
+ * informativo (muted). Resto: muted.
  */
 function valorClase(a: Alerta): string {
   if (a.tipo === "var_pct" || a.tipo === "nivel") {
-    if (a.valor > 0) return "bg-rose-50 text-rose-700";
-    if (a.valor < 0) return "bg-emerald-50 text-emerald-700";
-    return "bg-slate-100 text-slate-500";
+    if (a.valor > 0) return "bg-up/10 text-up";
+    if (a.valor < 0) return "bg-down/10 text-down";
+    return "bg-ink/[0.06] text-muted";
   }
-  return "bg-sky-50 text-sky-700";
+  return "bg-ink/[0.06] text-muted";
 }
 
 /** Texto del badge de `valor` según el tipo (porcentaje, σ o soles). */
@@ -123,9 +123,9 @@ export default function AlertasWatchlist({ alertas, productos }: Props) {
 
   if (alertas.length === 0) {
     return (
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-sm font-semibold">Alertas del día</h2>
-        <p className="mt-2 text-sm text-slate-400">
+      <div className="rounded-sm border border-rule bg-card p-5">
+        <h2 className="font-serif text-base text-ink">Alertas del día</h2>
+        <p className="mt-2 text-sm text-faint">
           Sin alertas hoy. No hubo variaciones ni anomalías sobre el umbral.
         </p>
       </div>
@@ -133,32 +133,32 @@ export default function AlertasWatchlist({ alertas, productos }: Props) {
   }
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-200 bg-slate-50/60">
+    <div className="rounded-sm border border-rule bg-card overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-rule bg-ink/[0.025]">
         <div>
-          <h2 className="text-sm font-semibold">Alertas del día</h2>
-          <p className="text-xs text-slate-400 mt-0.5">
+          <h2 className="font-serif text-base text-ink">Alertas del día</h2>
+          <p className="text-xs text-faint mt-0.5">
             Variaciones fuertes y anomalías sobre el último día.
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-500 select-none">
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted select-none">
             <input
               type="checkbox"
               checked={soloWatch}
               onChange={(e) => setSoloWatch(e.target.checked)}
               disabled={watch.size === 0}
-              className="h-3.5 w-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 disabled:opacity-40"
+              className="h-3.5 w-3.5 rounded-sm border-rule text-accent focus:ring-accent disabled:opacity-40"
             />
             Solo mi watchlist
             {watch.size > 0 && (
-              <span className="tabular-nums text-slate-400">({watch.size})</span>
+              <span className="tabular-nums text-faint">({watch.size})</span>
             )}
           </label>
           <button
             type="button"
             onClick={exportar}
-            className="shrink-0 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:border-emerald-300 hover:text-emerald-700 transition-colors"
+            className="shrink-0 rounded-sm border border-rule bg-card px-2.5 py-1.5 text-xs font-medium text-ink hover:border-ink transition-colors"
           >
             Descargar CSV
           </button>
@@ -166,11 +166,11 @@ export default function AlertasWatchlist({ alertas, productos }: Props) {
       </div>
 
       {/* Selector de watchlist: colapsado por defecto para no inflar el panel. */}
-      <div className="border-b border-slate-100 px-4 py-2">
+      <div className="border-b border-rule px-4 py-2">
         <button
           type="button"
           onClick={() => setMostrarSelector((v) => !v)}
-          className="text-[11px] uppercase tracking-wide text-slate-400 hover:text-emerald-600 transition-colors"
+          className="text-[11px] uppercase tracking-wide text-faint hover:text-accent transition-colors"
         >
           {mostrarSelector ? "− Ocultar watchlist" : "+ Marcar watchlist"}{" "}
           <span className="tabular-nums">({productosConAlerta.length})</span>
@@ -187,8 +187,8 @@ export default function AlertasWatchlist({ alertas, productos }: Props) {
                 onClick={() => toggle(p.slug)}
                 className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
                   activo
-                    ? "border-emerald-300 bg-emerald-50 text-emerald-700"
-                    : "border-slate-200 text-slate-500 hover:border-emerald-300 hover:text-emerald-700"
+                    ? "border-accent/40 bg-accent/[0.08] text-accent"
+                    : "border-rule text-muted hover:border-ink hover:text-ink"
                 }`}
               >
                 <span aria-hidden className="mr-1">
@@ -202,30 +202,30 @@ export default function AlertasWatchlist({ alertas, productos }: Props) {
         )}
       </div>
 
-      <ul className="divide-y divide-slate-50">
+      <ul className="divide-y divide-rule">
         {mostradas.map((a, i) => {
           const meta = metaDe(a.tipo);
           const enWatch = watch.has(a.slug);
           return (
             <li
               key={`${a.slug}-${a.tipo}-${i}`}
-              className="flex items-start justify-between gap-3 px-4 py-2.5 hover:bg-slate-50 transition-colors"
+              className="flex items-start justify-between gap-3 px-4 py-2.5 hover:bg-ink/[0.03] transition-colors"
             >
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <Link
                     href={`/p/${a.slug}`}
-                    className="truncate text-sm font-medium text-slate-700 hover:text-emerald-600 hover:underline"
+                    className="truncate text-sm font-medium text-ink hover:text-accent hover:underline"
                   >
                     {a.producto}
                   </Link>
                   {enWatch && (
-                    <span className="shrink-0 rounded bg-emerald-50 px-1 py-0.5 text-[9px] uppercase tracking-wide text-emerald-700">
+                    <span className="shrink-0 rounded-sm bg-accent/[0.08] px-1 py-0.5 text-[9px] uppercase tracking-wide text-accent">
                       watch
                     </span>
                   )}
                 </div>
-                <p className="mt-0.5 truncate text-xs text-slate-500">{a.mensaje}</p>
+                <p className="mt-0.5 truncate text-xs text-muted">{a.mensaje}</p>
               </div>
               <div className="flex shrink-0 flex-col items-end gap-1">
                 <span
@@ -240,7 +240,7 @@ export default function AlertasWatchlist({ alertas, productos }: Props) {
                   >
                     {meta.etiqueta}
                   </span>
-                  <span className="text-[10px] tabular-nums text-slate-400">
+                  <span className="text-[10px] tabular-nums text-faint">
                     {fechaCorta(a.fecha)}
                   </span>
                 </span>
@@ -249,17 +249,17 @@ export default function AlertasWatchlist({ alertas, productos }: Props) {
           );
         })}
         {visibles.length === 0 && (
-          <li className="px-4 py-8 text-center text-sm text-slate-400">
+          <li className="px-4 py-8 text-center text-sm text-faint">
             Tu watchlist no tiene alertas hoy.
           </li>
         )}
       </ul>
       {visibles.length > LIMITE && (
-        <div className="border-t border-slate-100 px-4 py-2 text-center">
+        <div className="border-t border-rule px-4 py-2 text-center">
           <button
             type="button"
             onClick={() => setMostrarTodas((v) => !v)}
-            className="text-xs font-medium text-emerald-700 hover:text-emerald-800 transition-colors"
+            className="text-xs font-medium text-accent hover:text-ink transition-colors"
           >
             {mostrarTodas ? "Ver menos" : `Ver todas (${visibles.length})`}
           </button>

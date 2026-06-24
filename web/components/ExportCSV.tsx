@@ -42,12 +42,12 @@ export default function ExportCSV({ productos }: Props) {
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="text-xs text-slate-500">Descargar datos:</span>
+      <span className="text-xs text-muted">Descargar datos:</span>
       <button
         type="button"
         onClick={() => descargar("latest")}
         disabled={sinDatos}
-        className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:border-emerald-400 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+        className="rounded-sm border border-rule bg-card px-3 py-1.5 text-xs font-medium text-ink hover:border-ink disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
       >
         CSV · precios de hoy
       </button>
@@ -55,7 +55,7 @@ export default function ExportCSV({ productos }: Props) {
         type="button"
         onClick={() => descargar("series")}
         disabled={sinDatos}
-        className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:border-emerald-400 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+        className="rounded-sm border border-rule bg-card px-3 py-1.5 text-xs font-medium text-ink hover:border-ink disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
       >
         CSV · serie completa
       </button>

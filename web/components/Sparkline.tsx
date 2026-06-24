@@ -5,7 +5,7 @@ type Props = {
   className?: string;
 };
 
-// Tiny inline trend line. Pure SVG, no deps. Color: pricier=rose, cheaper=emerald.
+// Tiny inline trend line. Pure SVG, no deps. Color: pricier=up (deep red), cheaper=down (deep green).
 export default function Sparkline({ values, width = 120, height = 34, className = "" }: Props) {
   const pts = values
     .map((v, i) => ({ v, i }))
@@ -28,7 +28,7 @@ export default function Sparkline({ values, width = 120, height = 34, className 
     .map((p, k) => `${k === 0 ? "M" : "L"}${x(p.i).toFixed(1)},${y(p.v).toFixed(1)}`)
     .join(" ");
   const up = pts[pts.length - 1].v >= pts[0].v;
-  const stroke = up ? "#e11d48" : "#059669";
+  const stroke = up ? "#a72a18" : "#1c7a47";
 
   return (
     <svg

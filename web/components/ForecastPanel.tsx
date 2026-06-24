@@ -22,9 +22,9 @@ export default function ForecastPanel({ producto }: { producto: Producto }) {
   // Sin pronóstico, o con poca historia para que sea creíble.
   if (!f || f.n_obs < 90) {
     return (
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="rounded-sm border border-rule bg-card p-4">
         <Header esIA={false} beta />
-        <p className="mt-2 text-sm text-slate-500">
+        <p className="mt-2 text-sm text-muted">
           Sin pronóstico {f ? `(poca historia: ${f.n_obs} observaciones)` : "(poca historia)"}.
           Mostramos pronóstico solo cuando hay suficiente serie para que el modelo sea evaluable.
         </p>
@@ -40,40 +40,40 @@ export default function ForecastPanel({ producto }: { producto: Producto }) {
   const esIAGanadora = f.metodo === "gbm" && mejorQueBaseline;
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="rounded-sm border border-rule bg-card p-4">
       <Header esIA={esIAGanadora} beta={!esIAGanadora} />
 
       <div className="mt-3 flex flex-wrap items-end gap-x-3 gap-y-1">
         <span className="text-2xl font-bold tabular-nums">{soles(f.precio_estimado)}</span>
-        <span className="text-sm text-slate-400">/kg estimado para mañana</span>
+        <span className="text-sm text-faint">/kg estimado para mañana</span>
       </div>
 
-      <div className="mt-1 text-sm text-slate-500 tabular-nums">
+      <div className="mt-1 text-sm text-muted tabular-nums">
         Rango probable: {soles(lo)} – {soles(hi)} por kg
       </div>
 
       <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
         <div>
-          <dt className="text-[11px] uppercase tracking-wide text-slate-400">Método</dt>
+          <dt className="text-[11px] uppercase tracking-wide text-faint">Método</dt>
           <dd className="font-medium">{metodoLegible(f.metodo)}</dd>
         </div>
         <div>
-          <dt className="text-[11px] uppercase tracking-wide text-slate-400">Historia usada</dt>
+          <dt className="text-[11px] uppercase tracking-wide text-faint">Historia usada</dt>
           <dd className="font-medium tabular-nums">{f.n_obs} días</dd>
         </div>
         <div>
-          <dt className="text-[11px] uppercase tracking-wide text-slate-400">Error del modelo (MAE)</dt>
+          <dt className="text-[11px] uppercase tracking-wide text-faint">Error del modelo (MAE)</dt>
           <dd className="font-medium tabular-nums">{soles(f.mae_modelo)}</dd>
         </div>
         <div>
-          <dt className="text-[11px] uppercase tracking-wide text-slate-400">Baseline ingenuo (MAE)</dt>
+          <dt className="text-[11px] uppercase tracking-wide text-faint">Baseline ingenuo (MAE)</dt>
           <dd className="font-medium tabular-nums">{soles(f.mae_baseline)}</dd>
         </div>
       </dl>
 
       <div
-        className={`mt-3 rounded-lg px-3 py-2 text-sm ${
-          mejorQueBaseline ? "bg-emerald-50 text-emerald-800" : "bg-slate-100 text-slate-600"
+        className={`mt-3 rounded-sm px-3 py-2 text-sm ${
+          mejorQueBaseline ? "bg-down/10 text-down" : "bg-ink/[0.05] text-muted"
         }`}
       >
         {esIAGanadora ? (
@@ -97,7 +97,7 @@ export default function ForecastPanel({ producto }: { producto: Producto }) {
         )}
       </div>
 
-      <p className="mt-3 text-[11px] leading-relaxed text-slate-400">
+      <p className="mt-3 text-[11px] leading-relaxed text-faint">
         {esIAGanadora ? (
           <>
             Modelo GBM (árboles con lags de precio, calendario y feriados), evaluado walk-forward
@@ -119,16 +119,16 @@ export default function ForecastPanel({ producto }: { producto: Producto }) {
 function Header({ esIA, beta }: { esIA: boolean; beta: boolean }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <h3 className="text-sm font-semibold">
+      <h3 className="font-serif text-base text-ink">
         {esIA ? "Pronóstico con IA · 1 día" : "Pronóstico a 1 día"}
       </h3>
       {esIA && (
-        <span className="text-[10px] uppercase tracking-wide rounded bg-emerald-50 text-emerald-700 px-1.5 py-0.5 font-medium">
+        <span className="text-[10px] uppercase tracking-wide rounded-sm bg-down/10 text-down px-1.5 py-0.5 font-medium">
           modelo GBM · le gana al baseline
         </span>
       )}
       {beta && (
-        <span className="text-[10px] uppercase tracking-wide rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 font-medium">
+        <span className="text-[10px] uppercase tracking-wide rounded-sm bg-ink/[0.05] text-muted px-1.5 py-0.5 font-medium">
           beta
         </span>
       )}

@@ -10,8 +10,8 @@ import {
 import { soles, fechaCorta } from "@/lib/format";
 
 // Paleta de líneas: tonos distinguibles entre sí, neutros respecto al tema
-// (el rose/emerald del tema codifica "más caro / más barato", no identidad).
-const COLORES = ["#0ea5e9", "#f59e0b", "#8b5cf6", "#ec4899", "#14b8a6"];
+// (el rojo/verde del tema codifica "más caro / más barato", no identidad de serie).
+const COLORES = ["#1f6f8b", "#b06a16", "#6b4a8f", "#a83a5b", "#2d7d6a"];
 
 const MIN_SEL = 2;
 const MAX_SEL = 5;
@@ -77,12 +77,12 @@ export default function Comparador({ productos }: { productos: Producto[] }) {
   };
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+    <div className="rounded-sm border border-rule bg-card overflow-hidden">
       {/* Cabecera */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-200 bg-slate-50/60">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-rule bg-ink/[0.025]">
         <div>
-          <h2 className="text-sm font-semibold">Comparador de precios</h2>
-          <p className="text-xs text-slate-500">
+          <h2 className="font-serif text-base text-ink">Comparador de precios</h2>
+          <p className="text-xs text-muted">
             Elige entre {MIN_SEL} y {MAX_SEL} productos y mira su precio (S/ por
             kg) superpuesto.
           </p>
@@ -91,7 +91,7 @@ export default function Comparador({ productos }: { productos: Producto[] }) {
           type="button"
           onClick={descargarCSV}
           disabled={seleccionados.length === 0}
-          className="shrink-0 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-emerald-300 hover:text-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="shrink-0 rounded-sm border border-rule bg-card px-3 py-1.5 text-xs font-medium text-ink hover:border-ink disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           Descargar CSV
         </button>
@@ -111,17 +111,17 @@ export default function Comparador({ productos }: { productos: Producto[] }) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Buscar producto…"
-            className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm placeholder:text-slate-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            className="rounded-sm border border-rule bg-card px-3 py-1.5 text-sm placeholder:text-faint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           />
-          <div className="mt-1 flex items-center justify-between text-[11px] text-slate-400">
+          <div className="mt-1 flex items-center justify-between text-[11px] text-faint">
             <span aria-live="polite">
               {seleccion.length} de {MAX_SEL} elegidos
             </span>
-            {lleno && <span className="text-amber-600">Máximo alcanzado</span>}
+            {lleno && <span className="text-muted">Máximo alcanzado</span>}
           </div>
 
           <ul
-            className="mt-2 max-h-64 overflow-y-auto rounded-md border border-slate-100 divide-y divide-slate-50"
+            className="mt-2 max-h-64 overflow-y-auto rounded-sm border border-rule divide-y divide-rule"
             role="listbox"
             aria-label="Productos para comparar"
             aria-multiselectable="true"
@@ -139,8 +139,8 @@ export default function Comparador({ productos }: { productos: Producto[] }) {
                     disabled={deshabilitado}
                     className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm transition-colors ${
                       checked
-                        ? "bg-emerald-50/70 text-slate-800"
-                        : "hover:bg-slate-50 text-slate-600"
+                        ? "bg-accent/[0.07] text-ink"
+                        : "hover:bg-ink/[0.04] text-muted"
                     } ${deshabilitado ? "cursor-not-allowed opacity-40" : ""}`}
                   >
                     <span
@@ -149,11 +149,11 @@ export default function Comparador({ productos }: { productos: Producto[] }) {
                       style={
                         checked
                           ? { backgroundColor: colorDe(p.slug), borderColor: colorDe(p.slug) }
-                          : { borderColor: "#cbd5e1" }
+                          : { borderColor: "#cbc4b1" }
                       }
                     />
                     <span className="flex-1 truncate">{p.nombre}</span>
-                    <span className="shrink-0 tabular-nums text-xs text-slate-400">
+                    <span className="shrink-0 tabular-nums text-xs text-faint">
                       {soles(p.latest.precio_kg)}
                     </span>
                   </button>
@@ -161,7 +161,7 @@ export default function Comparador({ productos }: { productos: Producto[] }) {
               );
             })}
             {candidatos.length === 0 && (
-              <li className="px-2.5 py-6 text-center text-xs text-slate-400">
+              <li className="px-2.5 py-6 text-center text-xs text-faint">
                 Sin coincidencias para «{query}».
               </li>
             )}
@@ -179,30 +179,30 @@ export default function Comparador({ productos }: { productos: Producto[] }) {
                     className="inline-block h-2.5 w-3.5 rounded-sm"
                     style={{ backgroundColor: colorDe(p.slug) }}
                   />
-                  <span className="text-xs text-slate-600">{p.nombre}</span>
-                  <span className="text-xs tabular-nums text-slate-400">
+                  <span className="text-xs text-muted">{p.nombre}</span>
+                  <span className="text-xs tabular-nums text-faint">
                     {soles(p.latest.precio_kg)}
                   </span>
                 </li>
               ))}
               {seleccionados.length < MIN_SEL && (
-                <li className="text-xs text-slate-400">
+                <li className="text-xs text-faint">
                   Elige al menos {MIN_SEL} productos para comparar.
                 </li>
               )}
             </ul>
 
-            <div className="flex shrink-0 rounded-md border border-slate-200 p-0.5">
+            <div className="flex shrink-0 rounded-sm border border-rule p-0.5">
               {RANGOS.map((r, i) => (
                 <button
                   key={r.label}
                   type="button"
                   onClick={() => setRangoIdx(i)}
                   aria-pressed={rangoIdx === i}
-                  className={`rounded px-2 py-1 text-xs transition-colors ${
+                  className={`rounded-sm px-2 py-1 text-xs transition-colors ${
                     rangoIdx === i
-                      ? "bg-slate-800 text-white"
-                      : "text-slate-500 hover:text-slate-700"
+                      ? "bg-ink text-paper"
+                      : "text-muted hover:text-ink"
                   }`}
                 >
                   {r.label}
@@ -217,7 +217,7 @@ export default function Comparador({ productos }: { productos: Producto[] }) {
             colorDe={colorDe}
           />
 
-          <p className="mt-3 text-[11px] text-slate-400">
+          <p className="mt-3 text-[11px] text-faint">
             Precio mayorista por kg. Cada serie tiene su propio color; las fechas
             sin dato se interrumpen. Referencial, no asesoría de compra.
           </p>
@@ -247,14 +247,14 @@ function ComparadorChart({
 
   if (productos.length < MIN_SEL) {
     return (
-      <div className="flex h-[280px] items-center justify-center rounded-lg border border-dashed border-slate-200 text-sm text-slate-400">
+      <div className="flex h-[280px] items-center justify-center rounded-sm border border-dashed border-rule text-sm text-faint">
         Selecciona {MIN_SEL} o más productos.
       </div>
     );
   }
   if (filas.length < 2) {
     return (
-      <div className="flex h-[280px] items-center justify-center rounded-lg border border-dashed border-slate-200 text-sm text-slate-400">
+      <div className="flex h-[280px] items-center justify-center rounded-sm border border-dashed border-rule text-sm text-faint">
         Sin datos suficientes para graficar.
       </div>
     );
@@ -283,7 +283,7 @@ function ComparadorChart({
   }
   if (!isFinite(min) || !isFinite(max)) {
     return (
-      <div className="flex h-[280px] items-center justify-center rounded-lg border border-dashed border-slate-200 text-sm text-slate-400">
+      <div className="flex h-[280px] items-center justify-center rounded-sm border border-dashed border-rule text-sm text-faint">
         Sin datos de precio en este rango.
       </div>
     );
@@ -331,14 +331,14 @@ function ComparadorChart({
             y1={y(v)}
             x2={W - padR}
             y2={y(v)}
-            stroke="#e2e8f0"
+            stroke="#e2dccd"
             strokeWidth={1}
           />
           <text
             x={padL - 6}
             y={y(v) + 3}
             textAnchor="end"
-            className="fill-slate-400"
+            className="fill-faint"
             fontSize="10"
           >
             {v.toFixed(2)}
@@ -366,7 +366,7 @@ function ComparadorChart({
           x={x(ti)}
           y={H - 4}
           textAnchor="middle"
-          className="fill-slate-400"
+          className="fill-faint"
           fontSize="10"
         >
           {filas[ti] ? fechaCorta(filas[ti].fecha) : ""}

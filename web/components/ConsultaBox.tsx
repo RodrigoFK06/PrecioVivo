@@ -53,14 +53,14 @@ export default function ConsultaBox() {
   }
 
   return (
-    <div className="h-full rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="h-full rounded-sm border border-rule bg-card p-5">
       <div className="flex items-center gap-2 mb-1">
-        <h2 className="text-sm font-semibold">Pregunta sobre los precios</h2>
-        <span className="text-[10px] uppercase tracking-wide rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 font-medium">
+        <h2 className="font-serif text-base text-ink">Pregunta sobre los precios</h2>
+        <span className="text-[10px] uppercase tracking-wide rounded-sm bg-ink/[0.05] text-muted px-1.5 py-0.5 font-medium">
           beta
         </span>
       </div>
-      <p className="text-xs text-slate-500 mb-3">
+      <p className="text-xs text-muted mb-3">
         En lenguaje natural. Solo usa los precios reales del último día.
       </p>
 
@@ -71,12 +71,12 @@ export default function ConsultaBox() {
           onChange={(e) => setQ(e.target.value)}
           placeholder="p. ej. ¿qué está más barato hoy?"
           aria-label="Pregunta sobre los precios"
-          className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+          className="flex-1 rounded-sm border border-rule bg-card px-3 py-2 text-sm outline-none focus:border-accent focus:ring-1 focus:ring-accent"
         />
         <button
           type="submit"
           disabled={cargando || !q.trim()}
-          className="shrink-0 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="shrink-0 rounded-sm border border-ink bg-ink px-4 py-2 text-sm font-medium text-paper hover:bg-accent hover:border-accent disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {cargando ? "Consultando…" : "Preguntar"}
         </button>
@@ -92,18 +92,18 @@ export default function ConsultaBox() {
               void consultar(ej);
             }}
             disabled={cargando}
-            className="text-xs rounded-full border border-slate-200 px-2.5 py-1 text-slate-500 hover:border-emerald-300 hover:text-emerald-700 disabled:opacity-50 transition-colors"
+            className="text-xs rounded-full border border-rule px-2.5 py-1 text-muted hover:border-ink hover:text-ink disabled:opacity-50 transition-colors"
           >
             {ej}
           </button>
         ))}
       </div>
 
-      {error && <p className="mt-4 text-sm text-rose-600">{error}</p>}
+      {error && <p className="mt-4 text-sm text-up">{error}</p>}
 
       {resp && !error && (
-        <div className="mt-4 border-t border-slate-100 pt-4">
-          <p className="text-[15px] leading-relaxed text-slate-700">{resp.texto}</p>
+        <div className="mt-4 border-t border-rule pt-4">
+          <p className="text-[15px] leading-relaxed text-ink">{resp.texto}</p>
 
           {resp.productos.length > 0 && (
             <ul className="mt-3 space-y-1">
@@ -111,11 +111,11 @@ export default function ConsultaBox() {
                 <li key={p.slug}>
                   <Link
                     href={`/p/${p.slug}`}
-                    className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-slate-50"
+                    className="flex items-center justify-between gap-2 rounded-sm px-2 py-1.5 hover:bg-ink/[0.04]"
                   >
                     <span className="truncate text-sm">{p.nombre}</span>
                     <span className="flex items-center gap-2 shrink-0">
-                      <span className="text-sm tabular-nums text-slate-600">{soles(p.precio_kg)}</span>
+                      <span className="text-sm tabular-nums text-muted">{soles(p.precio_kg)}</span>
                       <span
                         className={`text-xs font-medium tabular-nums rounded px-1.5 py-0.5 ${moveBg(p.var_pct)}`}
                       >
@@ -128,7 +128,7 @@ export default function ConsultaBox() {
             </ul>
           )}
 
-          <p className="mt-3 text-[11px] text-slate-400">
+          <p className="mt-3 text-[11px] text-faint">
             {resp.fuente === "claude"
               ? "Interpretado con IA (Claude) sobre el snapshot. Precios reales del mercado."
               : "Respuesta por coincidencia de palabras clave sobre el snapshot."}{" "}
