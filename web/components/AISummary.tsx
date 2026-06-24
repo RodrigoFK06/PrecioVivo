@@ -21,7 +21,7 @@ export default function AISummary({ resumen }: Props) {
         {esFallback ? (
           <span
             className="text-[10px] uppercase tracking-wide rounded-sm bg-ink/[0.05] text-muted px-1.5 py-0.5"
-            title="Texto generado por reglas. Con una API key de IA, lo redacta Claude."
+            title="Texto generado por reglas sobre datos reales. Con una API key de IA (DeepSeek), lo redacta el modelo."
           >
             generado por reglas · IA con API key
           </span>

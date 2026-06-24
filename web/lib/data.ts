@@ -56,7 +56,7 @@ export type Anomalia = {
 
 export type ResumenIA = {
   texto: string;
-  fuente: "claude" | "fallback";
+  fuente: "llm" | "fallback";
 };
 
 export type Producto = {

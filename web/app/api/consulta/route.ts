@@ -1,8 +1,15 @@
 import { NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import { buscarProductos, type Producto, type Snapshot } from "@/lib/data";
+
+// Proveedor LLM agnóstico (OpenAI-compatible). Por defecto DeepSeek (barato).
+// Sin clave => modo fallback por palabras clave. Local/gratis: AI_BASE_URL=
+// http://localhost:11434/v1 + AI_MODEL=llama3.1 (Ollama).
+const AI_BASE_URL = process.env.AI_BASE_URL ?? "https://api.deepseek.com";
+const AI_MODEL = process.env.AI_MODEL ?? "deepseek-chat";
+const AI_API_KEY = process.env.AI_API_KEY ?? process.env.DEEPSEEK_API_KEY;
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +24,7 @@ type Fila = {
 type Respuesta = {
   texto: string;
   productos: Fila[];
-  fuente?: "claude" | "fallback";
+  fuente?: "llm" | "fallback";
 };
 
 const fila = (p: Producto): Fila => ({
@@ -153,12 +160,12 @@ function fallback(q: string, snap: Snapshot): Respuesta {
 }
 
 // ---------------------------------------------------------------------------
-// CLAUDE (con API key). Interpreta la pregunta y elige productos del snapshot.
-// El modelo SOLO puede citar productos por slug; el precio lo ponemos NOSOTROS
-// desde el snapshot, así nunca se inventan cifras.
+// LLM (OpenAI-compatible, DeepSeek por defecto). Interpreta la pregunta y elige
+// productos del snapshot. El modelo SOLO cita productos por slug; el precio lo
+// ponemos NOSOTROS desde el snapshot, así nunca se inventan cifras.
 // ---------------------------------------------------------------------------
-async function conClaude(q: string, snap: Snapshot): Promise<Respuesta> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+async function conLLM(q: string, snap: Snapshot): Promise<Respuesta> {
+  const client = new OpenAI({ apiKey: AI_API_KEY, baseURL: AI_BASE_URL });
 
   // Catálogo compacto para el contexto: hechos numéricos, no documentos fuente.
   const catalogo = snap.productos.map((p) => ({
@@ -169,25 +176,28 @@ async function conClaude(q: string, snap: Snapshot): Promise<Respuesta> {
     tendencia: p.latest.tendencia,
   }));
 
-  const tool: Anthropic.Tool = {
-    name: "responder",
-    description:
-      "Responde la pregunta del usuario sobre precios mayoristas. Devuelve una frase en español y los slugs de los productos relevantes (en orden de relevancia). Usa SOLO slugs presentes en el catálogo.",
-    input_schema: {
-      type: "object",
-      properties: {
-        texto: {
-          type: "string",
-          description:
-            "Respuesta breve en español, citando productos por nombre. No inventes precios; si mencionas cifras usa exactamente las del catálogo.",
+  const tool = {
+    type: "function" as const,
+    function: {
+      name: "responder",
+      description:
+        "Responde la pregunta del usuario sobre precios mayoristas. Devuelve una frase en español y los slugs de los productos relevantes (en orden de relevancia). Usa SOLO slugs presentes en el catálogo.",
+      parameters: {
+        type: "object",
+        properties: {
+          texto: {
+            type: "string",
+            description:
+              "Respuesta breve en español, citando productos por nombre. No inventes precios; si mencionas cifras usa exactamente las del catálogo.",
+          },
+          slugs: {
+            type: "array",
+            items: { type: "string" },
+            description: "Slugs de los productos relevantes, de más a menos relevante. Máximo 8.",
+          },
         },
-        slugs: {
-          type: "array",
-          items: { type: "string" },
-          description: "Slugs de los productos relevantes, de más a menos relevante. Máximo 8.",
-        },
+        required: ["texto", "slugs"],
       },
-      required: ["texto", "slugs"],
     },
   };
 
@@ -201,13 +211,13 @@ async function conClaude(q: string, snap: Snapshot): Promise<Respuesta> {
     "Devuelve tu respuesta SIEMPRE llamando a la herramienta 'responder'.",
   ].join(" ");
 
-  const msg = await client.messages.create({
-    model: "claude-opus-4-8",
+  const resp = await client.chat.completions.create({
+    model: AI_MODEL,
     max_tokens: 1024,
-    system: sistema,
     tools: [tool],
-    tool_choice: { type: "tool", name: "responder" },
+    tool_choice: { type: "function", function: { name: "responder" } },
     messages: [
+      { role: "system", content: sistema },
       {
         role: "user",
         content: `Catálogo (JSON):\n${JSON.stringify(catalogo)}\n\nPregunta del usuario: ${q}`,
@@ -215,14 +225,19 @@ async function conClaude(q: string, snap: Snapshot): Promise<Respuesta> {
     ],
   });
 
-  // Extrae el tool_use.
-  const bloque = msg.content.find((b) => b.type === "tool_use");
-  if (!bloque || bloque.type !== "tool_use") {
+  // Extrae la function call.
+  const call = resp.choices[0]?.message?.tool_calls?.[0];
+  if (!call || call.type !== "function") {
     // El modelo no usó la herramienta: degradamos al fallback.
     return fallback(q, snap);
   }
 
-  const input = bloque.input as { texto?: unknown; slugs?: unknown };
+  let input: { texto?: unknown; slugs?: unknown };
+  try {
+    input = JSON.parse(call.function.arguments) as { texto?: unknown; slugs?: unknown };
+  } catch {
+    return fallback(q, snap);
+  }
   const texto = typeof input.texto === "string" ? input.texto : "";
   const slugs = Array.isArray(input.slugs)
     ? input.slugs.filter((s): s is string => typeof s === "string")
@@ -242,7 +257,7 @@ async function conClaude(q: string, snap: Snapshot): Promise<Respuesta> {
   return {
     texto: texto || "Aquí tienes los productos relevantes.",
     productos,
-    fuente: "claude",
+    fuente: "llm",
   };
 }
 
@@ -279,12 +294,10 @@ export async function POST(request: Request) {
   }
 
   try {
-    const r = process.env.ANTHROPIC_API_KEY
-      ? await conClaude(q, snap)
-      : fallback(q, snap);
+    const r = AI_API_KEY ? await conLLM(q, snap) : fallback(q, snap);
     return NextResponse.json(r satisfies Respuesta);
   } catch {
-    // Si Claude falla (red, cuota, etc.), degradamos al fallback con gracia.
+    // Si el LLM falla (red, cuota, etc.), degradamos al fallback con gracia.
     return NextResponse.json(fallback(q, snap) satisfies Respuesta);
   }
 }

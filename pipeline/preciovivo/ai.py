@@ -2,18 +2,19 @@
 
 Principio rector: la IA NO inventa números. Recibe HECHOS ya calculados aguas
 arriba (movers del día, ingreso/volumen, anomalías) y solo los redacta en prosa
-en español. Toda función puede operar SIN clave de API: si no hay
-ANTHROPIC_API_KEY (o la llamada falla), se devuelve una versión DETERMINISTA
-generada en Python con fuente='fallback'. El módulo funciona perfecto sin clave.
+en español. Toda función puede operar SIN clave de API: si no hay AI_API_KEY
+(proveedor OpenAI-compatible, DeepSeek por defecto; o la llamada falla), se
+devuelve una versión DETERMINISTA en Python con fuente='fallback'. Funciona
+perfecto sin clave.
 
 La detección de anomalías (`detecta_anomalias`) es 100% estadística (z-score
 robusto sobre MAD); no usa el LLM y es la fuente de hechos para
 `narrate_anomalies`.
 
 API pública (funciones puras):
-  - daily_summary(facts)        -> {"texto": str, "fuente": "claude"|"fallback"}
-  - narrate_anomalies(anomalias)-> {"texto": str, "fuente": "claude"|"fallback"}
-  - nl_query(pregunta, esquema_desc) -> {"sql": str, "fuente": "claude"|"fallback"}
+  - daily_summary(facts)        -> {"texto": str, "fuente": "llm"|"fallback"}
+  - narrate_anomalies(anomalias)-> {"texto": str, "fuente": "llm"|"fallback"}
+  - nl_query(pregunta, esquema_desc) -> {"sql": str, "fuente": "llm"|"fallback"}
   - detecta_anomalias(origen)   -> list[dict]  (contrato snapshot.anomalias)
 """
 from __future__ import annotations
@@ -25,7 +26,14 @@ import sqlite3
 import statistics
 from typing import Any
 
-MODEL = "claude-opus-4-8"
+# Proveedor LLM agnóstico (OpenAI-compatible). Por defecto DeepSeek (barato).
+# Config por entorno (sin clave => modo fallback determinista):
+#   AI_API_KEY  (o DEEPSEEK_API_KEY)
+#   AI_BASE_URL (default https://api.deepseek.com)
+#   AI_MODEL    (default deepseek-chat)
+# Local/gratis (Ollama): AI_BASE_URL=http://localhost:11434/v1, AI_MODEL=llama3.1
+AI_BASE_URL = os.environ.get("AI_BASE_URL", "https://api.deepseek.com")
+AI_MODEL = os.environ.get("AI_MODEL", "deepseek-chat")
 # Ventana de historia reciente para el z-score robusto y umbral de desviación.
 ANOMALIA_VENTANA = 30
 ANOMALIA_Z = 3.5
@@ -35,42 +43,47 @@ _MAD_K = 1.4826
 _Z_SATURADO = 99.0
 
 
+def _api_key() -> str | None:
+    return os.environ.get("AI_API_KEY") or os.environ.get("DEEPSEEK_API_KEY")
+
+
 # --------------------------------------------------------------------------- #
-# Cliente Anthropic (perezoso) y helper de llamada con fallback obligatorio
+# Cliente LLM (OpenAI-compatible, perezoso) con fallback obligatorio
 # --------------------------------------------------------------------------- #
 def _client():
-    """Devuelve un cliente Anthropic, o None si no hay clave / SDK disponible.
+    """Cliente OpenAI-compatible (DeepSeek por defecto), o None sin clave/SDK.
 
     Nunca lanza: la ausencia de clave es el camino normal (modo fallback).
     """
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    key = _api_key()
+    if not key:
         return None
     try:
-        import anthropic
-        return anthropic.Anthropic()
+        from openai import OpenAI
+        return OpenAI(api_key=key, base_url=AI_BASE_URL)
     except Exception:
         return None
 
 
-def _ask_claude(system: str, prompt: str, max_tokens: int = 1024) -> str | None:
-    """Una sola llamada al Messages API. Devuelve el texto, o None si falla.
+def _ask_llm(system: str, prompt: str, max_tokens: int = 1024) -> str | None:
+    """Una llamada de chat (OpenAI-compatible). Devuelve el texto, o None si falla.
 
-    Usa pensamiento adaptativo (recomendado en Opus 4.8). Cualquier excepción
-    (red, autenticación, rate-limit) se traga y degrada al fallback determinista.
+    Cualquier excepción (red, autenticación, rate-limit) se traga y degrada al
+    fallback determinista.
     """
     client = _client()
     if client is None:
         return None
     try:
-        resp = client.messages.create(
-            model=MODEL,
+        resp = client.chat.completions.create(
+            model=AI_MODEL,
             max_tokens=max_tokens,
-            thinking={"type": "adaptive"},
-            system=system,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
         )
-        partes = [b.text for b in resp.content if getattr(b, "type", None) == "text"]
-        texto = "".join(partes).strip()
+        texto = (resp.choices[0].message.content or "").strip()
         return texto or None
     except Exception:
         return None
@@ -135,9 +148,9 @@ def daily_summary(facts: dict) -> dict:
         "presente. No agregues cifras que no estén aquí.\n\n"
         f"{_compact_json(facts)}"
     )
-    texto = _ask_claude(system, prompt, max_tokens=800)
+    texto = _ask_llm(system, prompt, max_tokens=800)
     if texto:
-        return {"texto": texto, "fuente": "claude"}
+        return {"texto": texto, "fuente": "llm"}
     return {"texto": fallback, "fuente": "fallback"}
 
 
@@ -215,9 +228,9 @@ def narrate_anomalies(anomalias: list) -> dict:
         "causales.\n\n"
         f"{_compact_json(anomalias)}"
     )
-    texto = _ask_claude(system, prompt, max_tokens=900)
+    texto = _ask_llm(system, prompt, max_tokens=900)
     if texto:
-        return {"texto": texto, "fuente": "claude"}
+        return {"texto": texto, "fuente": "llm"}
     return {"texto": fallback, "fuente": "fallback"}
 
 
@@ -319,11 +332,11 @@ def nl_query(pregunta: str, esquema_desc: str | None = None) -> dict:
         f"Pregunta: {pregunta}\n\n"
         "Devuelve solo la consulta SELECT."
     )
-    texto = _ask_claude(system, prompt, max_tokens=600)
+    texto = _ask_llm(system, prompt, max_tokens=600)
     if texto:
         sql = _strip_sql(texto)
         if is_safe_select(sql):
-            return {"sql": sql, "fuente": "claude"}
+            return {"sql": sql, "fuente": "llm"}
     return {"sql": fallback_sql, "fuente": "fallback"}
 
 
