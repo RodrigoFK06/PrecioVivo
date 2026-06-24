@@ -63,7 +63,7 @@ const GLOSARIO: { t: string; d: string }[] = [
 const VISTA_KEY = "pv-guia-vista-v1";
 
 export default function Guia() {
-  const [modo, setModo] = useState<"off" | "tour" | "glosario">("off");
+  const [modo, setModo] = useState<"off" | "bienvenida" | "tour" | "glosario">("off");
   const [paso, setPaso] = useState(0);
   const [rect, setRect] = useState<DOMRect | null>(null);
 
@@ -74,8 +74,7 @@ export default function Guia() {
     try {
       if (!localStorage.getItem(VISTA_KEY)) {
         // eslint-disable-next-line react-hooks/set-state-in-effect
-        setModo("tour");
-        setPaso(0);
+        setModo("bienvenida");
       }
     } catch {
       /* localStorage no disponible: el botón flotante sigue ahí */
@@ -124,16 +123,92 @@ export default function Guia() {
       {modo === "off" && (
         <button
           type="button"
-          onClick={() => {
-            setPaso(0);
-            setModo("tour");
-          }}
-          className="fixed bottom-4 right-4 z-40 inline-flex items-center gap-2 border border-ink bg-ink px-4 py-2.5 text-sm font-medium text-paper shadow-lg hover:bg-accent hover:border-accent transition-colors"
-          aria-label="Cómo leer el tablero"
+          onClick={() => setModo("bienvenida")}
+          className="fixed bottom-4 right-4 z-40 inline-flex items-center gap-2 border border-ink bg-ink px-4 py-2.5 text-sm font-medium text-paper shadow-lg hover:opacity-90 transition-opacity"
+          aria-label="Qué es Precio Vivo y cómo leerlo"
         >
-          <span aria-hidden className="font-serif text-base leading-none">?</span>
-          Cómo leer esto
+          <span aria-hidden className="text-base leading-none">?</span>
+          Qué es esto
         </button>
+      )}
+
+      {/* ── Bienvenida: qué es / para qué sirve / quiénes (Árkos) ── */}
+      {modo === "bienvenida" && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-ink/60 p-3 sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Bienvenida a Precio Vivo"
+          onClick={cerrar}
+        >
+          <div
+            className="w-full max-w-xl max-h-[88vh] overflow-auto border border-rule bg-card p-6 sm:p-8 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <p className="eyebrow">Precio Vivo · por Árkos</p>
+              <button
+                type="button"
+                onClick={cerrar}
+                className="text-sm text-muted hover:text-ink transition-colors"
+                aria-label="Cerrar"
+              >
+                ✕
+              </button>
+            </div>
+            <h2 className="font-serif text-2xl sm:text-3xl font-semibold tracking-tight text-ink mt-2">
+              Los precios del mercado, vivos y con IA
+            </h2>
+
+            <div className="mt-4 space-y-4 text-[15px] text-muted leading-relaxed">
+              <p>
+                <span className="text-ink font-medium">Qué es.</span> Tomamos los reportes diarios
+                del Gran Mercado Mayorista de Lima (MIDAGRI) —PDFs que casi nadie aprovecha— y los
+                volvemos una serie de precios limpia, con 2 años de historia, que se actualiza cada
+                día.
+              </p>
+              <p>
+                <span className="text-ink font-medium">Para qué sirve.</span> Para ver cuánto cuesta
+                hoy cada producto, qué subió y qué bajó, cómo viene la tendencia y una predicción del
+                precio de mañana con IA. Útil para compradores (restaurantes, cadenas, mayoristas),
+                prensa y para cualquiera al que le importe el precio de la comida.
+              </p>
+              <p>
+                <span className="text-ink font-medium">Quiénes lo hacemos.</span> Lo construye{" "}
+                <span className="text-ink font-medium">Árkos</span> — convertimos data pública y
+                desordenada en productos de datos + IA. Esto es nuestro showcase, hecho en público y
+                con honestidad sobre qué funciona y qué no.
+              </p>
+            </div>
+
+            <div className="mt-6 flex flex-wrap items-center gap-2 border-t border-rule pt-5">
+              <button
+                type="button"
+                onClick={() => {
+                  setPaso(0);
+                  setModo("tour");
+                }}
+                className="border border-ink bg-ink px-4 py-2 text-sm font-medium text-paper hover:opacity-90 transition-opacity"
+              >
+                Hacer el tour
+              </button>
+              <button
+                type="button"
+                onClick={() => setModo("glosario")}
+                className="border border-rule px-3 py-2 text-sm text-ink hover:border-ink transition-colors"
+              >
+                Cómo leer
+              </button>
+              <button
+                type="button"
+                onClick={cerrar}
+                className="ml-auto text-sm text-muted hover:text-ink transition-colors"
+              >
+                Explorar el tablero →
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Tour con spotlight sombreado ──────────────────────────── */}
