@@ -8,6 +8,7 @@ import ProductTable from "@/components/ProductTable";
 import Comparador from "@/components/Comparador";
 import AlertasWatchlist, { type Alerta } from "@/components/AlertasWatchlist";
 import ExportCSV from "@/components/ExportCSV";
+import Guia from "@/components/Guia";
 import Link from "next/link";
 
 export const dynamic = "force-static";
@@ -152,7 +153,10 @@ export default async function Home() {
         </p>
 
         {/* tira de cifras (newspaper "by the numbers") */}
-        <div className="mt-9 grid grid-cols-2 sm:grid-cols-4 border-y-2 border-ink/85 divide-x divide-rule">
+        <div
+          data-guia="cifras"
+          className="mt-9 grid grid-cols-2 sm:grid-cols-4 border-y-2 border-ink/85 divide-x divide-rule"
+        >
           <Stat accent figure={`${modeloIA.iaGana}/${modeloIA.conForecast}`} label="IA le gana al baseline" />
           <Stat accent figure={`~${Math.round(modeloIA.mejoraMediaPct)}%`} label="Menos error vs baseline" />
           <Stat figure={snap.productCount} label={`Productos · ${snap.fechas.length} días`} />
@@ -177,8 +181,12 @@ export default async function Home() {
         bajada="Resumen automático del mercado y consulta en lenguaje natural sobre los precios."
       >
         <div className="grid gap-5 lg:grid-cols-2 items-start">
-          <AISummary resumen={snap.resumenIA} />
-          <ConsultaBox />
+          <div data-guia="resumen">
+            <AISummary resumen={snap.resumenIA} />
+          </div>
+          <div data-guia="consulta">
+            <ConsultaBox />
+          </div>
         </div>
       </Seccion>
 
@@ -188,7 +196,7 @@ export default async function Home() {
         titulo="Qué subió, qué bajó"
         bajada="Las mayores variaciones de precio frente a ayer y dónde entró más volumen al mercado."
       >
-        <div className="grid gap-8 md:grid-cols-3">
+        <div data-guia="movers" className="grid gap-8 md:grid-cols-3">
           <ListaMovers titulo="Más caros hoy" items={up} kind="precio" />
           <ListaMovers titulo="Más baratos hoy" items={down} kind="precio" />
           <ListaMovers titulo="Mayor ingreso hoy" items={surge} kind="volumen" />
@@ -201,7 +209,9 @@ export default async function Home() {
         titulo="Todos los productos"
         bajada={`${snap.productCount} productos en S/ por kg — variación, tendencia, ingreso del día y predicción con IA. Busca o desplázate dentro de la tabla.`}
       >
-        <ProductTable productos={productos} />
+        <div data-guia="tabla">
+          <ProductTable productos={productos} />
+        </div>
       </Seccion>
 
       {/* ── COMPARADOR ──────────────────────────────────────────────── */}
@@ -228,7 +238,9 @@ export default async function Home() {
         titulo="Metodología y datos"
         bajada="Qué funciona, qué no, y los datos crudos para descargar."
       >
-        <KillGateNote killGate={snap.forecastMeta?.kill_gate} modeloIA={modeloIA} />
+        <div data-guia="metodologia">
+          <KillGateNote killGate={snap.forecastMeta?.kill_gate} modeloIA={modeloIA} />
+        </div>
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-rule pt-5">
           <p className="text-sm text-muted">
             Descarga los precios de hoy o la serie histórica completa (CSV).
@@ -236,6 +248,8 @@ export default async function Home() {
           <ExportCSV productos={snap.productos} />
         </div>
       </Seccion>
+
+      <Guia />
     </div>
   );
 }

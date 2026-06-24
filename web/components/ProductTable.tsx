@@ -122,10 +122,10 @@ export default function ProductTable({ productos }: { productos: Producto[] }) {
                   </button>
                 </th>
               ))}
-              <th scope="col" className="px-4 py-2 font-medium">
+              <th scope="col" className="hidden md:table-cell px-4 py-2 font-medium">
                 Tendencia
               </th>
-              <th scope="col" className="px-4 py-2 font-medium text-right">
+              <th scope="col" className="hidden lg:table-cell px-4 py-2 font-medium text-right">
                 <button
                   type="button"
                   onClick={() => toggleSort("ingreso")}
@@ -140,7 +140,7 @@ export default function ProductTable({ productos }: { productos: Producto[] }) {
                   </span>
                 </button>
               </th>
-              <th scope="col" className="px-4 py-2 font-medium text-right">
+              <th scope="col" className="hidden sm:table-cell px-4 py-2 font-medium text-right">
                 <span className="inline-flex items-center gap-1.5">
                   Pronóstico
                   <span className="rounded-sm bg-ink/[0.05] px-1 py-0.5 text-[9px] uppercase tracking-wide text-muted">
@@ -148,7 +148,7 @@ export default function ProductTable({ productos }: { productos: Producto[] }) {
                   </span>
                 </span>
               </th>
-              <th scope="col" className="px-4 py-2 font-medium">
+              <th scope="col" className="hidden lg:table-cell px-4 py-2 font-medium">
                 30 días
               </th>
             </tr>
@@ -181,7 +181,7 @@ export default function ProductTable({ productos }: { productos: Producto[] }) {
                       {pct(p.latest.var_pct)}
                     </span>
                   </td>
-                  <td className="px-4 py-2">
+                  <td className="hidden md:table-cell px-4 py-2">
                     <span
                       className={`rounded px-1.5 py-0.5 text-xs ${tendenciaClass(
                         p.latest.tendencia,
@@ -190,10 +190,10 @@ export default function ProductTable({ productos }: { productos: Producto[] }) {
                       {p.latest.tendencia ?? "—"}
                     </span>
                   </td>
-                  <td className="px-4 py-2 text-right tabular-nums text-muted">
+                  <td className="hidden lg:table-cell px-4 py-2 text-right tabular-nums text-muted">
                     {tons(p.latest.masa_hoy)}
                   </td>
-                  <td className="px-4 py-2 text-right tabular-nums text-muted">
+                  <td className="hidden sm:table-cell px-4 py-2 text-right tabular-nums text-muted">
                     {fc ? (
                       <span
                         title={`Estimado a ${fc.horizonte_dias} día(s) · método ${fc.metodo} · rango S/ ${fc.intervalo[0].toFixed(
@@ -206,7 +206,7 @@ export default function ProductTable({ productos }: { productos: Producto[] }) {
                       <span className="text-faint">—</span>
                     )}
                   </td>
-                  <td className="px-4 py-2">
+                  <td className="hidden lg:table-cell px-4 py-2">
                     <Sparkline values={p.series.slice(-30).map((pt) => pt.precio_kg)} />
                   </td>
                 </tr>
