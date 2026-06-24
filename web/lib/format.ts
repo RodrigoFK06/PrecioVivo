@@ -26,27 +26,27 @@ export const fechaLarga = (iso: string) => {
 /** color intent for a food-price move: cheaper = good (emerald), pricier = rose. */
 export const moveClass = (v: number | null | undefined) =>
   v == null || v === 0
-    ? "text-slate-400"
+    ? "text-faint"
     : v > 0
-      ? "text-rose-600"
-      : "text-emerald-600";
+      ? "text-up"
+      : "text-down";
 
 export const moveBg = (v: number | null | undefined) =>
   v == null || v === 0
-    ? "bg-slate-100 text-slate-500"
+    ? "bg-ink/5 text-muted"
     : v > 0
-      ? "bg-rose-50 text-rose-700"
-      : "bg-emerald-50 text-emerald-700";
+      ? "bg-up/10 text-up"
+      : "bg-down/10 text-down";
 
 export const tendenciaClass = (t: string | null) => {
   switch (t) {
     case "En Alza":
-      return "bg-rose-50 text-rose-700";
+      return "bg-up/10 text-up";
     case "En Baja":
-      return "bg-emerald-50 text-emerald-700";
+      return "bg-down/10 text-down";
     case "Baja Notable":
-      return "bg-emerald-100 text-emerald-800";
+      return "bg-down/15 text-down";
     default:
-      return "bg-slate-100 text-slate-500";
+      return "bg-ink/5 text-muted";
   }
 };

@@ -12,7 +12,6 @@ import Link from "next/link";
 
 export const dynamic = "force-static";
 
-/** Resumen del modelo de IA frente al baseline, derivado de los forecasts por producto. */
 function resumenModeloIA(productos: Producto[]): ModeloIAResumen {
   const conForecast = productos.filter((p) => p.forecast).length;
   const ganadores = productos.filter(
@@ -26,82 +25,83 @@ function resumenModeloIA(productos: Producto[]): ModeloIAResumen {
   return { conForecast, iaGana: ganadores.length, mejoraMediaPct };
 }
 
-function Kpi({
+function Stat({
+  figure,
   label,
-  value,
-  sub,
   accent,
 }: {
+  figure: React.ReactNode;
   label: string;
-  value: React.ReactNode;
-  sub?: string;
   accent?: boolean;
 }) {
   return (
-    <div
-      className={`rounded-xl border bg-white p-4 shadow-sm ${
-        accent ? "border-emerald-200 ring-1 ring-inset ring-emerald-50" : "border-slate-200"
-      }`}
-    >
-      <div className="text-[11px] uppercase tracking-wide text-slate-400">{label}</div>
+    <div className="px-4 py-4 sm:px-5">
       <div
-        className={`mt-1 text-2xl sm:text-3xl font-bold tracking-tight tabular-nums ${
-          accent ? "text-emerald-600" : "text-slate-900"
+        className={`font-serif text-3xl sm:text-4xl leading-none tabular-nums ${
+          accent ? "text-accent" : "text-ink"
         }`}
       >
-        {value}
+        {figure}
       </div>
-      {sub && <div className="mt-0.5 text-xs text-slate-500 leading-snug">{sub}</div>}
+      <div className="eyebrow mt-2">{label}</div>
     </div>
   );
 }
 
-function SectionHeader({ title, desc }: { title: string; desc?: string }) {
+function Seccion({
+  label,
+  titulo,
+  bajada,
+  children,
+}: {
+  label: string;
+  titulo: string;
+  bajada?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="mb-4">
-      <h2 className="text-lg sm:text-xl font-semibold tracking-tight text-slate-900">{title}</h2>
-      {desc && <p className="mt-0.5 text-sm text-slate-500">{desc}</p>}
-    </div>
+    <section className="mb-14">
+      <div className="border-t-2 border-ink/85 pt-3 mb-6">
+        <p className="eyebrow">{label}</p>
+        <h2 className="font-serif text-2xl sm:text-3xl text-ink mt-1">{titulo}</h2>
+        {bajada && <p className="mt-1.5 text-sm text-muted max-w-2xl leading-relaxed">{bajada}</p>}
+      </div>
+      {children}
+    </section>
   );
 }
 
-function MoverCard({
-  title,
-  accent,
+function ListaMovers({
+  titulo,
   items,
   kind,
 }: {
-  title: string;
-  accent: string;
+  titulo: string;
   items: Producto[];
   kind: "precio" | "volumen";
 }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <h3 className={`text-sm font-semibold mb-2.5 ${accent}`}>{title}</h3>
-      <ul className="divide-y divide-slate-50">
+    <div>
+      <h3 className="eyebrow border-b border-rule pb-2 mb-1">{titulo}</h3>
+      <ul className="divide-y divide-rule">
         {items.map((p) => (
           <li key={p.slug}>
             <Link
               href={`/p/${p.slug}`}
-              className="group flex items-center justify-between gap-2 py-1.5 hover:text-slate-900"
+              className="group flex items-baseline justify-between gap-2 py-2"
             >
-              <span className="truncate text-sm text-slate-600 group-hover:text-emerald-700">
+              <span className="truncate text-[15px] text-ink group-hover:text-accent transition-colors">
                 {p.nombre}
               </span>
               {kind === "precio" ? (
-                <span className="flex items-center gap-2 shrink-0">
-                  <span className="text-sm tabular-nums text-slate-500">{soles(p.latest.precio_kg)}</span>
-                  <span
-                    className={`text-xs font-medium tabular-nums rounded px-1.5 py-0.5 ${moveBg(
-                      p.latest.var_pct,
-                    )}`}
-                  >
+                <span className="flex items-baseline gap-2 shrink-0 tabular-nums">
+                  <span className="text-sm text-muted">{soles(p.latest.precio_kg)}</span>
+                  <span className={`text-sm font-medium rounded px-1.5 py-0.5 ${moveBg(p.latest.var_pct)}`}>
                     {pct(p.latest.var_pct)}
                   </span>
                 </span>
               ) : (
-                <span className="shrink-0 text-sm tabular-nums font-medium text-sky-700">
+                <span className="shrink-0 text-sm font-medium tabular-nums text-muted">
                   {tons(p.latest.masa_hoy)}
                 </span>
               )}
@@ -125,98 +125,117 @@ export default async function Home() {
   const nDown = snap.productos.filter((p) => (p.latest.var_pct ?? 0) < 0).length;
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8 sm:py-10">
-      {/* ── HERO: foco + KPIs ───────────────────────────────────────── */}
-      <header className="mb-12">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-slate-900">
-            Precios mayoristas, en vivo
-          </h1>
+    <div className="mx-auto max-w-6xl px-4 py-10 sm:py-14">
+      {/* ── HERO editorial ──────────────────────────────────────────── */}
+      <header className="mb-16">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <p className="eyebrow">
+            {snap.mercado} · {fechaLarga(snap.latestFecha)}
+          </p>
           <FreshnessBadge latestFecha={snap.latestFecha} generatedAt={snap.generatedAt} />
         </div>
-        <p className="mt-2 text-[15px] text-slate-500 max-w-2xl">
-          {snap.mercado} · {fechaLarga(snap.latestFecha)}.{" "}
-          <span className="text-slate-700">
-            Predecimos los precios con IA — y ya le ganamos al baseline para la mayoría.
+
+        <h1 className="font-serif text-4xl sm:text-5xl lg:text-6xl leading-[1.05] text-ink mt-3 max-w-3xl">
+          Los precios del mercado, leídos con IA
+        </h1>
+        <p className="mt-4 text-lg text-muted max-w-2xl leading-relaxed">
+          Predecimos los precios mayoristas del Gran Mercado de Lima — y el modelo ya le gana al
+          baseline en{" "}
+          <span className="text-ink font-medium tabular-nums">
+            {modeloIA.iaGana} de {modeloIA.conForecast}
+          </span>{" "}
+          productos, con{" "}
+          <span className="text-accent font-medium tabular-nums">
+            ~{Math.round(modeloIA.mejoraMediaPct)}% menos error
           </span>
+          . Lo probamos en público — y decimos también qué no funciona.
         </p>
 
-        <div className="mt-5 grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <Kpi
-            accent
-            label="IA le gana al baseline"
-            value={`${modeloIA.iaGana}/${modeloIA.conForecast}`}
-            sub="productos · validado walk-forward"
-          />
-          <Kpi
-            accent
-            label="Menos error vs baseline"
-            value={`~${Math.round(modeloIA.mejoraMediaPct)}%`}
-            sub="en esos productos"
-          />
-          <Kpi
-            label="Cobertura"
-            value={snap.productCount}
-            sub={`productos · ${snap.fechas.length} días de historia`}
-          />
-          <Kpi
-            label="Movimiento de hoy"
-            value={
+        {/* tira de cifras (newspaper "by the numbers") */}
+        <div className="mt-9 grid grid-cols-2 sm:grid-cols-4 border-y-2 border-ink/85 divide-x divide-rule">
+          <Stat accent figure={`${modeloIA.iaGana}/${modeloIA.conForecast}`} label="IA le gana al baseline" />
+          <Stat accent figure={`~${Math.round(modeloIA.mejoraMediaPct)}%`} label="Menos error vs baseline" />
+          <Stat figure={snap.productCount} label={`Productos · ${snap.fechas.length} días`} />
+          <Stat
+            figure={
               <span>
-                <span className="text-rose-600">{nUp}↑</span>{" "}
-                <span className="text-slate-300 text-xl">/</span>{" "}
-                <span className="text-emerald-600">{nDown}↓</span>
+                <span className="text-up">{nUp}</span>
+                <span className="text-faint text-2xl">↑ </span>
+                <span className="text-down">{nDown}</span>
+                <span className="text-faint text-2xl">↓</span>
               </span>
             }
-            sub="subieron / bajaron vs ayer"
+            label="Subieron / bajaron hoy"
           />
         </div>
       </header>
 
-      {/* ── HOY: resumen IA + consulta ──────────────────────────────── */}
-      <section className="mb-12">
-        <SectionHeader title="El día de hoy" desc="Resumen automático y consulta en lenguaje natural." />
-        <div className="grid gap-4 lg:grid-cols-2 items-start">
+      {/* ── HOY ─────────────────────────────────────────────────────── */}
+      <Seccion
+        label="El día de hoy"
+        titulo="Resumen y consulta"
+        bajada="Resumen automático del mercado y consulta en lenguaje natural sobre los precios."
+      >
+        <div className="grid gap-5 lg:grid-cols-2 items-start">
           <AISummary resumen={snap.resumenIA} />
           <ConsultaBox />
         </div>
-      </section>
+      </Seccion>
 
-      {/* ── MOVIMIENTOS: 3-up balanceado ────────────────────────────── */}
-      <section className="mb-12">
-        <SectionHeader title="Movimientos del día" desc="Qué subió, qué bajó y dónde entró más volumen." />
-        <div className="grid gap-4 md:grid-cols-3">
-          <MoverCard title="▲ Más caros hoy" accent="text-rose-600" items={up} kind="precio" />
-          <MoverCard title="▼ Más baratos hoy" accent="text-emerald-600" items={down} kind="precio" />
-          <MoverCard title="● Mayor ingreso hoy" accent="text-sky-600" items={surge} kind="volumen" />
+      {/* ── MOVIMIENTOS ─────────────────────────────────────────────── */}
+      <Seccion
+        label="Movimientos del día"
+        titulo="Qué subió, qué bajó"
+        bajada="Las mayores variaciones de precio frente a ayer y dónde entró más volumen al mercado."
+      >
+        <div className="grid gap-8 md:grid-cols-3">
+          <ListaMovers titulo="Más caros hoy" items={up} kind="precio" />
+          <ListaMovers titulo="Más baratos hoy" items={down} kind="precio" />
+          <ListaMovers titulo="Mayor ingreso hoy" items={surge} kind="volumen" />
         </div>
-      </section>
+      </Seccion>
 
-      {/* ── PRODUCTOS: el dato principal (header + buscador propios, tabla acotada) ── */}
-      <section className="mb-12">
+      {/* ── PRODUCTOS ───────────────────────────────────────────────── */}
+      <Seccion
+        label="La tabla"
+        titulo="Todos los productos"
+        bajada={`${snap.productCount} productos en S/ por kg — variación, tendencia, ingreso del día y predicción con IA. Busca o desplázate dentro de la tabla.`}
+      >
         <ProductTable productos={productos} />
-      </section>
+      </Seccion>
 
-      {/* ── COMPARADOR: ancho completo, el gráfico necesita espacio ──── */}
-      <section className="mb-12">
+      {/* ── COMPARADOR ──────────────────────────────────────────────── */}
+      <Seccion
+        label="Explorar"
+        titulo="Comparar productos"
+        bajada="Superpone la evolución de precio de varios productos a lo largo del tiempo."
+      >
         <Comparador productos={snap.productos} />
-      </section>
+      </Seccion>
 
-      {/* ── ALERTAS: compacto (top 7 + ver todas) ───────────────────── */}
-      <section className="mb-12">
+      {/* ── ALERTAS ─────────────────────────────────────────────────── */}
+      <Seccion
+        label="Vigilancia"
+        titulo="Alertas del día"
+        bajada="Variaciones fuertes y anomalías estadísticas sobre el último día. Marca tu watchlist."
+      >
         <AlertasWatchlist alertas={alertas} productos={snap.productos} />
-      </section>
+      </Seccion>
 
       {/* ── METODOLOGÍA + DATOS ─────────────────────────────────────── */}
-      <section>
+      <Seccion
+        label="Cómo lo hacemos"
+        titulo="Metodología y datos"
+        bajada="Qué funciona, qué no, y los datos crudos para descargar."
+      >
         <KillGateNote killGate={snap.forecastMeta?.kill_gate} modeloIA={modeloIA} />
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="text-sm text-slate-500">
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-rule pt-5">
+          <p className="text-sm text-muted">
             Descarga los precios de hoy o la serie histórica completa (CSV).
           </p>
           <ExportCSV productos={snap.productos} />
         </div>
-      </section>
+      </Seccion>
     </div>
   );
 }
