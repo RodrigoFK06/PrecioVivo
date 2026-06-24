@@ -273,6 +273,11 @@ def _parse_row(ws, chars, top, res: ParseResult):
     if not name_toks:
         return
     name = _clean_name(" ".join(name_toks))
+    if name.isupper():
+        # Some editions render product names ALL-CAPS; normalize to Title Case so
+        # "ACELGA" and "Acelga" resolve to the SAME product across the 2-year series
+        # (verified: .title() reproduces every Title-Case name exactly).
+        name = name.title()
     if len(name) < 3 or "," in name or NON_PRODUCT.match(_deaccent(name)):
         return  # commas only appear in the date header, never in product names
 
