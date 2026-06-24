@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Image from "next/image";
 
 /* Guía interactiva: tour con overlay sombreado (spotlight) + glosario "cómo leer".
    Mobile-first: el spotlight resalta el elemento y la explicación va en una tarjeta
@@ -162,7 +163,17 @@ export default function Guia() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-3">
-              <p className="eyebrow">Precio Vivo · por Árkos</p>
+              <div className="flex items-center gap-2">
+                <Image
+                  src="/arkos-isotype.svg"
+                  alt=""
+                  width={2000}
+                  height={2000}
+                  aria-hidden
+                  className="h-5 w-5"
+                />
+                <p className="eyebrow">Precio Vivo · por Árkos</p>
+              </div>
               <button
                 type="button"
                 onClick={cerrar}

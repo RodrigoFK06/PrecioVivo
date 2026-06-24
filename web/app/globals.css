@@ -21,7 +21,12 @@
   --color-rule-strong: #d6d6da; /* heavier rule */
   --color-up: #dc2626; /* precio sube = rojo (semántica financiera) */
   --color-down: #16a34a; /* precio baja / positivo = verde */
-  --color-accent: #2f2f33; /* monochrome interactive tone (hover/press) */
+  --color-accent: #200e3a; /* índigo Árkos — acento interactivo sutil (hover/foco) */
+
+  /* Marca Árkos */
+  --color-arkos-indigo: #200e3a;
+  --color-arkos-teal: #52d2d7;
+  --color-arkos-paper: #f3f8ff;
 
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 }

@@ -31,15 +31,26 @@ export default function OpengraphImage() {
           }}
         >
           <div style={{ fontSize: 40, fontWeight: 700, letterSpacing: "-0.02em" }}>Precio Vivo</div>
-          <div
-            style={{
-              fontSize: 22,
-              color: "#52525b",
-              textTransform: "uppercase",
-              letterSpacing: "0.14em",
-            }}
-          >
-            por Árkos
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div
+              style={{
+                width: 26,
+                height: 26,
+                border: "4px solid #52d2d7",
+                transform: "rotate(15deg)",
+              }}
+            />
+            <div
+              style={{
+                fontSize: 24,
+                color: "#200e3a",
+                textTransform: "uppercase",
+                letterSpacing: "0.14em",
+                fontWeight: 600,
+              }}
+            >
+              por Árkos
+            </div>
           </div>
         </div>
 

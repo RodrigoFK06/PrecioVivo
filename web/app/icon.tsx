@@ -3,7 +3,7 @@ import { ImageResponse } from "next/og";
 export const size = { width: 64, height: 64 };
 export const contentType = "image/png";
 
-// Favicon: monograma monocromático (cuadrado tinta, "P" en blanco).
+// Favicon: monograma "P" en blanco sobre índigo Árkos.
 export default function Icon() {
   return new ImageResponse(
     (
@@ -14,7 +14,7 @@ export default function Icon() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: "#0c0c0d",
+          background: "#200e3a",
           color: "#ffffff",
           fontSize: 44,
           fontWeight: 700,

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
+import Image from "next/image";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
@@ -32,9 +33,18 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             </Link>
             <a
               href="#arkos"
-              className="shrink-0 text-xs text-muted hover:text-accent transition-colors"
+              className="group shrink-0 inline-flex items-center gap-1.5 text-xs text-muted transition-colors hover:text-ink"
             >
-              hecho por <span className="font-serif font-semibold text-ink">Árkos</span>
+              hecho por
+              <Image
+                src="/arkos-isotype.svg"
+                alt=""
+                width={2000}
+                height={2000}
+                aria-hidden
+                className="h-4 w-4"
+              />
+              <span className="font-semibold text-ink">Árkos</span>
             </a>
           </div>
         </header>
@@ -46,8 +56,18 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           <div className="mx-auto max-w-6xl px-4 py-10">
             <div className="flex flex-col gap-5 border-b border-rule pb-8 sm:flex-row sm:items-end sm:justify-between">
               <div className="max-w-md">
-                <p className="eyebrow">Hecho por Árkos</p>
-                <p className="mt-2 font-serif text-2xl leading-snug text-ink">
+                <div className="flex items-center gap-2">
+                  <Image
+                    src="/arkos-isotype.svg"
+                    alt=""
+                    width={2000}
+                    height={2000}
+                    aria-hidden
+                    className="h-7 w-7"
+                  />
+                  <span className="text-xl font-semibold tracking-tight text-ink">Árkos</span>
+                </div>
+                <p className="mt-3 text-2xl font-semibold leading-snug tracking-tight text-ink">
                   ¿Necesitas software de datos + IA a medida?
                 </p>
                 <p className="mt-2 text-sm text-muted leading-relaxed">
@@ -57,7 +77,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
               </div>
               <a
                 href="mailto:hola@arkos.dev"
-                className="shrink-0 inline-flex items-center gap-1.5 border border-ink bg-ink px-5 py-2.5 text-sm font-medium text-paper hover:bg-accent hover:border-accent transition-colors"
+                className="shrink-0 inline-flex items-center gap-1.5 border border-ink bg-ink px-5 py-2.5 text-sm font-medium text-paper transition-opacity hover:opacity-90"
               >
                 Hablemos →
               </a>
