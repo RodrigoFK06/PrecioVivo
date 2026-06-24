@@ -136,6 +136,39 @@ def test_modelo_volumen_no_usa_volumen_futuro():
     assert vol[t] == vol_corrupto[t]
 
 
+def test_impute_vol_es_causal_no_filtra_futuro():
+    """La imputación de masa NO debe depender de masas futuras (anti-leakage).
+
+    Regresión del bug de la media GLOBAL: imputar los NaN con np.mean de TODA la
+    serie metía masas futuras en celdas pasadas. El test corrompe las masas crudas
+    estrictamente posteriores a un origen t y exige que el `vol` imputado en TODO
+    índice <=t quede idéntico. Una imputación causal (forward-fill) pasa; la media
+    global fallaba porque su valor de relleno cambia al mover datos del futuro.
+    """
+    serie = _serie_sintetica(120, seed=3)
+    s = F._limpiar(serie)
+    masas = s.masas
+    # garantizar que hay NaN en el prefijo <=t para que la imputación sea relevante
+    masas = masas.copy()
+    masas[3] = np.nan
+    masas[7] = np.nan
+
+    vol = F._impute_vol(masas)
+    assert vol is not None
+
+    t = 40
+    masas_corruptas = masas.copy()
+    masas_corruptas[t + 1:] = 1e9  # masas estrictamente futuras, absurdas
+    vol_c = F._impute_vol(masas_corruptas)
+    assert vol_c is not None
+
+    assert np.array_equal(vol[: t + 1], vol_c[: t + 1]), (
+        "La masa imputada en índices <=t cambió al alterar masas futuras: "
+        "la imputación filtró el futuro hacia el pasado (leakage).")
+    # y no deben quedar NaN
+    assert not np.isnan(vol).any()
+
+
 # =============================================================================
 # POCA DATA -> SIN PRONÓSTICO
 # =============================================================================

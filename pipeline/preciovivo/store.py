@@ -18,6 +18,17 @@ from datetime import datetime, timezone
 
 GMML = ("GMML", "Gran Mercado Mayorista de Lima")
 
+# Catálogo de mercados conocidos (codigo -> nombre). GMML es la fuente diaria
+# principal (reporte-335); MMF2 llega vía el boletín multi-mercado. MMP y AVES
+# quedan declarados para cuando esas fuentes se integren. Sembrarlos en
+# init_schema hace que multi-mercado funcione sin tocar nada aguas abajo.
+MERCADOS_CONOCIDOS = {
+    "GMML": "Gran Mercado Mayorista de Lima",
+    "MMF2": "Mercado Mayorista de Frutas N°2",
+    "MMP": "Mercado Mayorista Productores",
+    "AVES": "Mercado de Aves",
+}
+
 _SQLITE_DDL = """
 CREATE TABLE IF NOT EXISTS mercados (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,7 +105,32 @@ class Store:
         else:
             cur.executescript(_SQLITE_DDL)
         self._conn.commit()
+        # Solo se siembra GMML aquí (es el mercado de la ingesta diaria y el id
+        # por defecto de upsert_precios). Los demás mercados del catálogo
+        # (MMF2/frutas, etc.) se crean BAJO DEMANDA cuando su fuente se ingesta
+        # — ver Store.mercado_para_codigo / el subcomando --boletin — para no
+        # cambiar el conteo de mercados de una BD recién inicializada.
         self.mercado_id(*GMML)
+
+    def mercado_para_codigo(self, codigo: str) -> int:
+        """mercado_id de `codigo`, creándolo desde el catálogo si no existe.
+
+        Atajo honesto para multi-mercado: usa el nombre canónico de
+        MERCADOS_CONOCIDOS (o el propio codigo si es desconocido). No siembra
+        mercados que nadie usa; crea exactamente el que la fuente necesita.
+        """
+        nombre = MERCADOS_CONOCIDOS.get(codigo, codigo)
+        return self.mercado_id(codigo, nombre)
+
+    def mercados(self) -> dict[str, int]:
+        """Devuelve {codigo -> id} de todos los mercados registrados.
+
+        Útil para Integración multi-mercado: mapear el codigo del boletín
+        (p. ej. 'MMF2') a su mercado_id antes de upsert_precios.
+        """
+        with self._cursor() as cur:
+            cur.execute("SELECT codigo, id FROM mercados")
+            return {cod: mid for cod, mid in cur.fetchall()}
 
     @contextmanager
     def _cursor(self):

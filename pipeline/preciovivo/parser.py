@@ -26,10 +26,13 @@ import pdfplumber
 # Loose horizontal guards (generous; absorb >10px edition drift). center = (x0+x1)/2.
 NAME_MAX = 232          # product-name tokens have center < this
 MASA_MIN = 180          # masa values start here; footnote markers ("1/","2/") sit left of it
-MASA_MAX = 372          # the 4 masa values sit left of the unidad text
-# The 4 masa columns are right-aligned and ~30px apart; assign by x-center band
-# (NOT by collection order) so blank missing cells don't shift the assignment.
-MASA_BANDS = (("ayer", 200, 267), ("hoy", 267, 297), ("d7", 297, 333), ("d4lun", 333, 372))
+MASA_MAX = 382          # the 4 masa values sit left of the unidad text (center >= 383)
+MASA_KEYS = ("ayer", "hoy", "d7", "d4lun")  # fixed left-to-right column order
+# Fallback x-center bands for the 4 masa columns (current 335/2026 geometry). These
+# are used ONLY when order-based assignment is ambiguous (see _assign_masa); the
+# masa block drifts up to ~27px right in 2024 editions, which these bands cannot
+# absorb on their own, hence the order-first strategy below.
+MASA_BANDS = (("ayer", 200, 270), ("hoy", 270, 300), ("d7", 300, 340), ("d4lun", 340, 382))
 ROW_Y_TOL = 3.0
 MISSING = {":", "-", "", "—", "·"}
 
@@ -52,6 +55,23 @@ MESES = {
     "julio": 7, "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10,
     "noviembre": 11, "diciembre": 12,
 }
+
+# --- §4 format-change tripwire ------------------------------------------------
+# The header band (above the first product row) carries the column structure. We
+# fingerprint it by (a) the set of CORE header keywords that must always exist and
+# (b) the LEFT-TO-RIGHT ORDER of the column-group ANCHORs. The order is used (not
+# absolute x) because column pixel positions drift between editions; ordering is
+# drift-immune yet still flips if MIDAGRI adds, drops, renames or reorders a
+# column. Verified identical across 29 editions spanning 2024-01..2026-06.
+HEADER_BAND = (120, 185)            # y-window holding the two header rows
+HEADER_CORE = frozenset({
+    "productos", "masa", "ingreso", "precios", "unidad", "equiv",
+    "promedio", "ayer", "hoy", "ultimos",
+})
+HEADER_ANCHORS = ("productos", "masa", "unidad", "equiv", "precios", "ultimos")
+# Known-good fingerprint of the current 335 format (2024..2026). Regenerate with
+# layout_fingerprint(page) if the source layout legitimately changes.
+REFERENCE_FINGERPRINT = "productos|masa|unidad|precios|equiv|ultimos"
 
 
 def _deaccent(s: str) -> str:
@@ -123,6 +143,11 @@ class ParseResult:
     fecha: date | None
     rows: list[ProductRow] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    # §4 tripwire: header layout fingerprint of this PDF, and whether it diverged
+    # from the known-good current format. `layout_changed` is a STRONG signal that
+    # the source layout shifted and the column mapping may no longer hold.
+    fingerprint: str | None = None
+    layout_changed: bool = False
 
     @property
     def ok(self) -> bool:
@@ -137,6 +162,49 @@ def _extract_fecha(page) -> date | None:
     return None
 
 
+def _header_words(page):
+    lo, hi = HEADER_BAND
+    return [w for w in page.extract_words(use_text_flow=False, keep_blank_chars=False)
+            if lo <= w["top"] <= hi and _has_alpha(w["text"])]
+
+
+def layout_fingerprint(page) -> str:
+    """Huella del layout de cabecera: orden izquierda->derecha de las columnas-ancla.
+
+    Devuelve los keywords ANCHOR ordenados por su posicion-x (centro), unidos por
+    '|'. Es estable frente al drift de pixeles entre ediciones pero cambia si la
+    fuente agrega, quita, renombra o reordena una columna. Comparar contra
+    REFERENCE_FINGERPRINT para detectar un cambio de formato (§4).
+    """
+    pos: dict[str, float] = {}
+    for w in _header_words(page):
+        t = _deaccent(w["text"]).lower()
+        if t in HEADER_ANCHORS:
+            cx = _center(w)
+            if t not in pos or cx < pos[t]:
+                pos[t] = cx
+    order = sorted(pos, key=lambda k: pos[k])
+    return "|".join(order)
+
+
+def _check_layout(page, res: ParseResult) -> None:
+    """Set res.fingerprint / res.layout_changed and push a STRONG warning on drift."""
+    present = {_deaccent(w["text"]).lower() for w in _header_words(page)}
+    missing = sorted(HEADER_CORE - present)
+    res.fingerprint = layout_fingerprint(page)
+    if missing or res.fingerprint != REFERENCE_FINGERPRINT:
+        res.layout_changed = True
+        detail = []
+        if missing:
+            detail.append(f"faltan encabezados {missing}")
+        if res.fingerprint != REFERENCE_FINGERPRINT:
+            detail.append(f"orden de columnas '{res.fingerprint}' "
+                          f"!= esperado '{REFERENCE_FINGERPRINT}'")
+        res.warnings.insert(
+            0, "!! CAMBIO DE FORMATO detectado en la cabecera (§4): "
+               + "; ".join(detail) + ". Revisar el mapeo de columnas del parser.")
+
+
 def _cluster_rows(items):
     rows: list[dict] = []
     for it in sorted(items, key=lambda w: (round(w["top"], 1), w["x0"])):
@@ -147,6 +215,38 @@ def _cluster_rows(items):
         else:
             rows.append({"top": it["top"], "items": [it]})
     return rows
+
+
+def _assign_masa(cells):
+    """Map the masa-block cells -> {ayer,hoy,d7,d4lun}.
+
+    `cells` is the left-to-right list of (center, value) for every token in the
+    masa zone (each is a number or a missing-marker that yields None). The 4 masa
+    columns are right-aligned in a FIXED order and every cell is rendered (a ":"
+    placeholder stands in for blanks across all editions seen, 2024..2026), so the
+    robust assignment is BY ORDER once we have exactly 4 cells. This is immune to
+    the ~27px rightward drift of the masa block in some 2024 editions, which broke
+    the absolute-band assignment (values landed one column over and collided).
+
+    When the cell count is not 4 (a cell merged with a neighbour, or a stray token
+    leaked in), we fall back to the absolute x-bands and flag ambiguity so the
+    caller can warn rather than silently store a wrong column.
+    """
+    masa = {k: None for k in MASA_KEYS}
+    if len(cells) == 4:
+        for key, (_c, val) in zip(MASA_KEYS, cells):
+            masa[key] = val
+        return masa, False
+    ambiguous = len(cells) > 4
+    for c, val in cells:
+        for key, lo, hi in MASA_BANDS:
+            if lo <= c < hi:
+                if masa[key] is None:
+                    masa[key] = val
+                else:
+                    ambiguous = True
+                break
+    return masa, ambiguous
 
 
 def _split_price_trend(chars_in_band):
@@ -180,22 +280,16 @@ def _parse_row(ws, chars, top, res: ParseResult):
     while i < n and _center(ws[i]) < MASA_MIN:
         i += 1
 
-    # 2) masa: assign the 4 columns BY X-BAND, not by collection order — some
-    #    editions leave missing cells blank (no ":"), which would otherwise shift
-    #    a positional assignment and store values in the wrong column.
-    masa = {"ayer": None, "hoy": None, "d7": None, "d4lun": None}
-    masa_ambiguous = False
+    # 2) masa: collect the masa-block cells left-to-right, then assign by ORDER
+    #    (drift-immune) with a band fallback. Every cell is rendered (numbers or a
+    #    ":" placeholder), so a fixed-order mapping is safe and survives the ~27px
+    #    rightward drift of the masa block in some 2024 editions.
+    masa_cells = []
     while i < n and _center(ws[i]) < MASA_MAX and not _has_alpha(ws[i]["text"]) \
             and (_is_missing(ws[i]["text"]) or _has_digit(ws[i]["text"])):
-        c = _center(ws[i])
-        for key, lo, hi in MASA_BANDS:
-            if lo <= c < hi:
-                if masa[key] is None:
-                    masa[key] = _num(ws[i]["text"])
-                else:
-                    masa_ambiguous = True
-                break
+        masa_cells.append((_center(ws[i]), _num(ws[i]["text"])))
         i += 1
+    masa, masa_ambiguous = _assign_masa(masa_cells)
 
     # 3) unidad: alpha tokens (e.g. "Kilogramo", "Atado Grande")
     unidad_toks = []
@@ -248,6 +342,7 @@ def parse_report(pdf_path: str) -> ParseResult:
     res = ParseResult(fecha=None)
     with pdfplumber.open(pdf_path) as pdf:
         res.fecha = _extract_fecha(pdf.pages[0])
+        _check_layout(pdf.pages[0], res)  # §4 tripwire (does not block parsing)
         for page in pdf.pages:
             words = page.extract_words(use_text_flow=False, keep_blank_chars=False)
             chars = page.chars
@@ -261,6 +356,11 @@ if __name__ == "__main__":
     path = sys.argv[1] if len(sys.argv) > 1 else "../data/samples/reporte_335_2026-06-22.pdf"
     r = parse_report(path)
     print(f"fecha={r.fecha}  productos={len(r.rows)}  warnings={len(r.warnings)}  ok={r.ok}")
+    print(f"huella={r.fingerprint!r}  layout_changed={r.layout_changed}")
+    masa_full = sum(1 for p in r.rows if all(v is not None for v in
+                    (p.masa_ayer, p.masa_hoy, p.masa_7d, p.masa_4lun)))
+    tend_n = sum(1 for p in r.rows if p.tendencia)
+    print(f"masa_completa={masa_full}/{len(r.rows)}  con_tendencia={tend_n}/{len(r.rows)}")
     print("\n  PRODUCTO                  masa(A/H/7/4L)        unidad        eqv  p_hoy/u  p_hoy/kg  tend")
     for p in r.rows[:26]:
         masa = "/".join("·" if v is None else f"{v:g}" for v in

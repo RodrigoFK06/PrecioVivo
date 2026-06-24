@@ -29,19 +29,34 @@ def _round(x, n=4):
     return round(x, n) if isinstance(x, (int, float)) else None
 
 
+def _gmml_id(c) -> int | None:
+    """id del mercado GMML, o None si la tabla aún no lo tiene."""
+    row = c.execute("SELECT id FROM mercados WHERE codigo = 'GMML'").fetchone()
+    return row[0] if row else None
+
+
 def build(db_path: str = DB) -> dict:
     c = sqlite3.connect(db_path)
     c.row_factory = sqlite3.Row
-    fechas = [r[0] for r in c.execute("SELECT DISTINCT fecha FROM precios_diarios ORDER BY fecha")]
+    # El snapshot base es GMML (reporte-335 diario). Con multi-mercado en la BD
+    # (boletín MMF2/frutas), filtrar por el mercado GMML mantiene la forma y los
+    # números EXACTOS del contrato del dashboard; los demás mercados se exponen
+    # aparte en snapshot.mercados (retro-compatible: el dashboard puede ignorarlo).
+    gmml_id = _gmml_id(c)
+    where_g = "WHERE pd.mercado_id = ?" if gmml_id is not None else ""
+    args_g = (gmml_id,) if gmml_id is not None else ()
+    fechas = [r[0] for r in c.execute(
+        f"SELECT DISTINCT fecha FROM precios_diarios pd {where_g} ORDER BY fecha", args_g)]
     latest = fechas[-1] if fechas else None
 
     prods = {}
-    q = """SELECT p.nombre_canonico AS nombre, p.categoria, pd.fecha, pd.unidad, pd.equiv_kg,
+    q = f"""SELECT p.nombre_canonico AS nombre, p.categoria, pd.fecha, pd.unidad, pd.equiv_kg,
                   pd.precio_hoy_kg, pd.precio_ayer_kg, pd.precio_hoy_unit,
                   pd.masa_hoy, pd.masa_7d, pd.tendencia
            FROM precios_diarios pd JOIN productos p ON p.id = pd.producto_id
+           {where_g}
            ORDER BY p.nombre_canonico, pd.fecha"""
-    for r in c.execute(q):
+    for r in c.execute(q, args_g):
         p = prods.setdefault(r["nombre"], {
             "nombre": r["nombre"], "slug": slugify(r["nombre"]),
             "categoria": r["categoria"], "unidad": r["unidad"],
@@ -92,7 +107,12 @@ def build(db_path: str = DB) -> dict:
     _add_forecast(snapshot, productos, db_path)
     # --- Fase 4: capa IA (anomalías estadísticas + resumen del día) -----------
     _add_ia(snapshot, productos, db_path)
+    # --- Multi-mercado (boletín MMF2/frutas): retro-compatible, opcional -------
+    _add_mercados(snapshot, c, gmml_id)
+    # --- Fase 4: alertas accionables (detección honesta; no envía nada) -------
+    _add_alertas(snapshot)
 
+    c.close()
     return snapshot
 
 
@@ -164,6 +184,75 @@ def _add_ia(snapshot: dict, productos: list[dict], db_path: str) -> None:
         snapshot.setdefault("anomalias", [])
         snapshot.setdefault("resumenIA", {"texto": "", "fuente": "fallback"})
         snapshot["iaError"] = f"{type(e).__name__}: {e}"
+
+
+def _add_mercados(snapshot: dict, c, gmml_id) -> None:
+    """Adjunta snapshot.mercados con los mercados NO-GMML presentes (p. ej. MMF2).
+
+    RETRO-COMPATIBLE: el bloque `productos` (GMML) no cambia. Esta sección es
+    aditiva: si no hay datos de otros mercados, queda como lista vacía y el
+    dashboard puede ignorarla. Para cada mercado expone su último día y los
+    productos de ese día (nombre, slug, precio_kg, var_pct). Si la tabla
+    `mercados` no existe o algo falla, degrada a [] sin romper el snapshot.
+    """
+    try:
+        rows = c.execute(
+            "SELECT m.codigo, m.nombre, p.nombre_canonico, pd.fecha, "
+            "       pd.precio_hoy_kg, pd.precio_ayer_kg "
+            "FROM precios_diarios pd "
+            "JOIN productos p ON p.id = pd.producto_id "
+            "JOIN mercados m ON m.id = pd.mercado_id "
+            + ("WHERE pd.mercado_id <> ? " if gmml_id is not None else "")
+            + "ORDER BY m.codigo, pd.fecha, p.nombre_canonico",
+            (gmml_id,) if gmml_id is not None else (),
+        ).fetchall()
+    except sqlite3.Error as e:  # tabla ausente u otra rareza -> aditivo vacío
+        snapshot["mercados"] = []
+        snapshot["mercadosError"] = f"{type(e).__name__}: {e}"
+        return
+
+    por_cod: dict[str, dict] = {}
+    ultima_fecha: dict[str, str] = {}
+    for r in rows:
+        cod = r["codigo"]
+        ultima_fecha[cod] = r["fecha"]  # filas ya ordenadas por fecha asc
+    for r in rows:
+        cod = r["codigo"]
+        if r["fecha"] != ultima_fecha.get(cod):
+            continue  # solo el último día disponible de cada mercado
+        m = por_cod.setdefault(cod, {
+            "codigo": cod, "nombre": r["nombre"],
+            "latestFecha": r["fecha"], "productos": [],
+        })
+        hoy = _round(r["precio_hoy_kg"], 4)
+        ayer = _round(r["precio_ayer_kg"], 4)
+        var = None
+        if ayer and hoy is not None and ayer != 0:
+            var = round(100.0 * (hoy - ayer) / ayer, 1)
+        m["productos"].append({
+            "nombre": r["nombre_canonico"],
+            "slug": slugify(r["nombre_canonico"]),
+            "precio_kg": hoy,
+            "var_pct": var,
+        })
+    snapshot["mercados"] = [por_cod[k] for k in sorted(por_cod)]
+
+
+def _add_alertas(snapshot: dict) -> None:
+    """Adjunta snapshot.alertas: lista de alertas accionables ya disparadas.
+
+    Reusa alerts.evaluate sobre el snapshot YA construido (que incluye latest,
+    var_pct y anomalías), sin reabrir la BD. Cada alerta es un dict del contrato
+    {producto, slug, tipo, mensaje, valor, fecha, regla}, listo para el dashboard.
+    Detección honesta: NO envía nada. Si la capa falla, alertas=[] (no rompe).
+    """
+    try:
+        from .alerts import DEFAULT_REGLAS, evaluate
+        disparadas = evaluate(snapshot, DEFAULT_REGLAS)
+        snapshot["alertas"] = [a.to_dict() for a in disparadas]
+    except Exception as e:  # noqa: BLE001 - el snapshot base no debe caerse
+        snapshot.setdefault("alertas", [])
+        snapshot["alertasError"] = f"{type(e).__name__}: {e}"
 
 
 def main():

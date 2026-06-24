@@ -5,6 +5,8 @@
   python -m preciovivo.ingest --backfill-months 6 # last N months
   python -m preciovivo.ingest --sample <pdf>      # parse+load a local PDF
   python -m preciovivo.ingest --forecast          # compute & store pronosticos
+  python -m preciovivo.ingest --alerts            # evalúa e imprime alertas (no envía)
+  python -m preciovivo.ingest --boletin [url|pdf] # boletín multi-mercado (MMF2/frutas)
   python -m preciovivo.ingest --health            # source health check only
 
 Store: Postgres/Supabase if DATABASE_URL is set, else local SQLite.
@@ -64,6 +66,132 @@ def _targets(args) -> list[H.Daily]:
     return H.latest_dailies(3)
 
 
+def _db_path(store: Store) -> str:
+    """Ruta SQLite del backend, o el default de export/forecast en Postgres."""
+    if store.backend.startswith("sqlite:"):
+        return store.backend.split("sqlite:", 1)[1]
+    return os.environ.get("PRECIOVIVO_DB", "../data/preciovivo.db")
+
+
+def _run_alerts(store: Store) -> None:
+    """Evalúa las reglas por defecto sobre el último día y las imprime.
+
+    Detección honesta: NO envía nada (el emisor externo queda fuera). Reusa
+    alerts.evaluate sobre el snapshot que arma export.build (que ya inyecta las
+    anomalías), sin reabrir la BD por su cuenta.
+    """
+    from . import alerts as A
+    from .export import build
+
+    db = _db_path(store)
+    snapshot = build(db)
+    disparadas = A.evaluate(snapshot, A.DEFAULT_REGLAS)
+    carga = A.carga_para_emisor(disparadas, canal="consola", snapshot=snapshot)
+
+    print(f"alerts: {len(disparadas)} alerta(s) sobre {snapshot.get('latestFecha')} "
+          f"· reglas={[r.nombre for r in A.DEFAULT_REGLAS]}")
+    for a in disparadas:
+        print(f"  [{a.tipo:<8}] {a.producto:<26.26} valor={a.valor:+8.2f} {a.fecha}")
+        print(f"             {a.mensaje}")
+    if not disparadas:
+        print("  (ninguna con las reglas vigentes)")
+    print(f"carga emisor (no se envía): asunto={carga['asunto']!r} "
+          f"n_alertas={carga['n_alertas']}")
+
+
+def _boletin_pdf_path(arg: str):
+    """Resuelve el argumento de --boletin a una ruta de PDF local.
+
+    arg puede ser: '' (vacío -> PDF cacheado o SAMPLE_URL), una ruta a un .pdf
+    existente, o una URL CDN. Devuelve (path, descargado:bool) o (None, False).
+    """
+    from . import boletin as B
+
+    if arg and os.path.exists(arg):
+        return arg, False
+    if arg.lower().startswith("http"):
+        path, _sha, _n = B.fetch_boletin(arg)
+        return path, True
+    # sin valor: usa el último PDF cacheado; si no hay, descarga el de muestra.
+    cached = sorted(glob.glob(os.path.join(B.RAW_DIR, f"{B.FUENTE}_*.pdf")))
+    if cached:
+        return cached[-1], False
+    path, _sha, _n = B.fetch_boletin(B.SAMPLE_URL)
+    return path, True
+
+
+def _run_boletin(store: Store, arg: str) -> None:
+    """Descarga+parsea el boletín multi-mercado y hace upsert por mercado.
+
+    NO BLOQUEANTE: si el boletín falla (sin red, formato raro), reporta y sigue
+    sin tocar los datos GMML diarios. El upsert usa el mercado_id correspondiente
+    (MMF2/frutas y también el GMML del boletín) — la tabla `mercados` ya existe.
+    """
+    from . import boletin as B
+    from .parser import ProductRow
+
+    try:
+        path, descargado = _boletin_pdf_path(arg)
+    except Exception as e:  # noqa: BLE001 - no debe romper el pipeline GMML
+        print(f"boletin: SKIP (no se pudo obtener el PDF: {type(e).__name__}: {e})")
+        return
+    if path is None:
+        print("boletin: SKIP (sin PDF cacheado y sin URL/red)")
+        return
+
+    rows = B.parse_boletin(path)
+    cov = B.coverage(path)
+    fecha = rows[0]["fecha"] if rows else None
+    print(f"boletin: {os.path.basename(path)} "
+          f"{'(descargado)' if descargado else '(cacheado)'} · fecha={fecha} · "
+          f"{len(rows)} filas · cobertura {cov['cobertura_pct']}% {cov['por_mercado']}")
+    if not rows or fecha is None:
+        print("boletin: SKIP upsert (parser parcial / sin fecha) — GMML intacto")
+        return
+
+    # Provenance del crudo (sha del archivo en disco).
+    try:
+        import hashlib
+        with open(path, "rb") as f:
+            data = f.read()
+        store.record_raw(B.FUENTE, fecha, path, hashlib.sha256(data).hexdigest(), len(data))
+    except Exception as e:  # noqa: BLE001 - provenance opcional, no bloquea
+        print(f"  (aviso: no se registró el crudo: {type(e).__name__}: {e})")
+
+    # Agrupa por codigo de mercado y construye ProductRow (precio ya S/ por kg).
+    # IMPORTANTE: se OMITE el mercado GMML del boletín. La serie GMML diaria viene
+    # del reporte-335 (precio del día); la columna GMML del boletín es un PROMEDIO
+    # semanal de otra semántica. Mezclarlos contaminaría la serie diaria y los
+    # pronósticos. El valor multi-mercado del boletín es el mercado de FRUTAS
+    # (MMF2) y demás, que el reporte-335 no cubre.
+    por_merc: dict[str, list[ProductRow]] = {}
+    omitidos_gmml = 0
+    for r in rows:
+        cod = r["mercado"]
+        if cod == "GMML":
+            omitidos_gmml += 1
+            continue
+        # precio_kg ya viene en S/ por kg -> equiv_kg=1.0 hace precio_hoy_kg=precio_kg.
+        pr = ProductRow(
+            producto=r["producto"],
+            masa_ayer=None, masa_hoy=None, masa_7d=None, masa_4lun=None,
+            unidad="Kilogramo", equiv_kg=1.0,
+            precio_ayer_unit=None, precio_hoy_unit=r["precio_kg"], precio_7d_unit=None,
+            tendencia=None,
+        )
+        por_merc.setdefault(cod, []).append(pr)
+
+    total = 0
+    for cod, prs in sorted(por_merc.items()):
+        mid = store.mercado_para_codigo(cod)  # crea el mercado bajo demanda
+        n = store.upsert_precios(fecha, prs, B.FUENTE, mercado_id=mid)
+        total += n
+        print(f"  {cod} (mercado_id={mid}): {n} productos upserted")
+    print(f"boletin: {total} filas upserted en {len(por_merc)} mercado(s) "
+          f"(GMML del boletín omitido: {omitidos_gmml} filas; la serie GMML diaria "
+          f"del reporte-335 queda intacta)")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Precio Vivo ingest")
     ap.add_argument("--latest", type=int, metavar="N")
@@ -74,6 +202,13 @@ def main(argv=None):
                     help="re-parse cached raw PDFs in data/raw (no download) and re-load")
     ap.add_argument("--forecast", action="store_true",
                     help="compute honest forecasts for all products and store them")
+    ap.add_argument("--alerts", action="store_true",
+                    help="evalúa las reglas de alerta sobre el último día y las imprime "
+                         "(no envía nada; detección honesta sobre datos ya calculados)")
+    ap.add_argument("--boletin", nargs="?", const="", metavar="URL_O_PDF",
+                    help="ingesta el boletín multi-mercado (GMML+MMF2/frutas). Acepta "
+                         "una URL CDN o una ruta a PDF; sin valor usa el PDF cacheado "
+                         "o el SAMPLE_URL. NO bloquea ni altera la ingesta GMML diaria")
     ap.add_argument("--health", action="store_true", help="check source URLs are live, then exit")
     args = ap.parse_args(argv)
 
@@ -128,6 +263,10 @@ def main(argv=None):
               f"mae_baseline={kg.get('mae_baseline')} "
               f"mae_con_volumen={kg.get('mae_con_volumen')} "
               f"mejora_pct={kg.get('mejora_pct')} n_productos={kg.get('n_productos')}")
+    elif args.alerts:
+        _run_alerts(store)
+    elif args.boletin is not None:
+        _run_boletin(store, args.boletin)
     else:
         targets = _targets(args)
         print(f"targets: {len(targets)} dailies"
