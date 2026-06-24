@@ -82,6 +82,9 @@ export default function AlertasWatchlist({ alertas, productos }: Props) {
   // Watchlist: conjunto de slugs marcados por el usuario.
   const [watch, setWatch] = useState<Set<string>>(new Set());
   const [soloWatch, setSoloWatch] = useState(false);
+  const [mostrarTodas, setMostrarTodas] = useState(false);
+  const [mostrarSelector, setMostrarSelector] = useState(false);
+  const LIMITE = 7;
 
   // Productos que tienen al menos una alerta hoy (los que importan para marcar).
   const productosConAlerta = useMemo(() => {
@@ -95,6 +98,8 @@ export default function AlertasWatchlist({ alertas, productos }: Props) {
     if (!soloWatch || watch.size === 0) return alertas;
     return alertas.filter((a) => watch.has(a.slug));
   }, [alertas, soloWatch, watch]);
+
+  const mostradas = mostrarTodas ? visibles : visibles.slice(0, LIMITE);
 
   function toggle(slug: string) {
     setWatch((prev) => {
@@ -160,12 +165,18 @@ export default function AlertasWatchlist({ alertas, productos }: Props) {
         </div>
       </div>
 
-      {/* Selector de watchlist: marca los productos que quieres seguir. */}
-      <div className="border-b border-slate-100 px-4 py-3">
-        <p className="mb-2 text-[11px] uppercase tracking-wide text-slate-400">
-          Marca productos para tu watchlist
-        </p>
-        <div className="flex flex-wrap gap-1.5">
+      {/* Selector de watchlist: colapsado por defecto para no inflar el panel. */}
+      <div className="border-b border-slate-100 px-4 py-2">
+        <button
+          type="button"
+          onClick={() => setMostrarSelector((v) => !v)}
+          className="text-[11px] uppercase tracking-wide text-slate-400 hover:text-emerald-600 transition-colors"
+        >
+          {mostrarSelector ? "− Ocultar watchlist" : "+ Marcar watchlist"}{" "}
+          <span className="tabular-nums">({productosConAlerta.length})</span>
+        </button>
+        {mostrarSelector && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
           {productosConAlerta.map((p) => {
             const activo = watch.has(p.slug);
             return (
@@ -188,10 +199,11 @@ export default function AlertasWatchlist({ alertas, productos }: Props) {
             );
           })}
         </div>
+        )}
       </div>
 
       <ul className="divide-y divide-slate-50">
-        {visibles.map((a, i) => {
+        {mostradas.map((a, i) => {
           const meta = metaDe(a.tipo);
           const enWatch = watch.has(a.slug);
           return (
@@ -242,6 +254,17 @@ export default function AlertasWatchlist({ alertas, productos }: Props) {
           </li>
         )}
       </ul>
+      {visibles.length > LIMITE && (
+        <div className="border-t border-slate-100 px-4 py-2 text-center">
+          <button
+            type="button"
+            onClick={() => setMostrarTodas((v) => !v)}
+            className="text-xs font-medium text-emerald-700 hover:text-emerald-800 transition-colors"
+          >
+            {mostrarTodas ? "Ver menos" : `Ver todas (${visibles.length})`}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -93,7 +93,7 @@ export default function ProductTable({ productos }: { productos: Producto[] }) {
         </div>
       </div>
 
-      <div className="overflow-x-auto">
+      <div className="max-h-[34rem] overflow-auto">
         <table className="w-full text-sm">
           <caption className="sr-only">
             Precios mayoristas por kg, variación frente a ayer, tendencia, ingreso del día y
