@@ -3,12 +3,18 @@ import { forecastDe } from "@/lib/data";
 import { soles } from "@/lib/format";
 
 /**
- * Pronóstico BETA a 1 día para un producto (server component).
+ * Pronóstico a 1 día para un producto (server component).
  *
- * Honestidad: el forecast se construye sobre baselines de PRECIO, no de volumen.
- * El kill-gate del snapshot mostró que el volumen NO mejora la predicción, así que
- * aquí no se usa el volumen como predictor. Si no hay pronóstico o hay poca historia
- * (n_obs < 90), no inventamos nada: lo decimos.
+ * Honestidad matizada (DOS cosas distintas, no se confunden):
+ *  (1) El MODELO de IA (GBM con lags + calendario + feriados) ya le GANA al
+ *      baseline ingenuo en la mayoría de productos, validado walk-forward. Para
+ *      esos productos (metodo == 'gbm' y mae_modelo < mae_baseline) lo mostramos
+ *      como "Pronóstico con IA" con su MAE real y el % de mejora.
+ *  (2) El VOLUMEN específicamente no aporta sobre el precio (kill-gate): por eso
+ *      el modelo se construye sobre señales de precio + calendario, no de volumen.
+ *
+ * Si no hay pronóstico, hay poca historia (n_obs < 90), o el modelo no le gana al
+ * baseline, no inventamos nada: lo decimos.
  */
 export default function ForecastPanel({ producto }: { producto: Producto }) {
   const f = forecastDe(producto);
@@ -17,7 +23,7 @@ export default function ForecastPanel({ producto }: { producto: Producto }) {
   if (!f || f.n_obs < 90) {
     return (
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <Header />
+        <Header esIA={false} beta />
         <p className="mt-2 text-sm text-slate-500">
           Sin pronóstico {f ? `(poca historia: ${f.n_obs} observaciones)` : "(poca historia)"}.
           Mostramos pronóstico solo cuando hay suficiente serie para que el modelo sea evaluable.
@@ -30,10 +36,12 @@ export default function ForecastPanel({ producto }: { producto: Producto }) {
   const mejorQueBaseline = f.mae_modelo < f.mae_baseline;
   const mejoraPct =
     f.mae_baseline > 0 ? ((f.mae_baseline - f.mae_modelo) / f.mae_baseline) * 100 : null;
+  // Modelo de IA que de verdad le gana al baseline: lo tratamos como tal, no como beta.
+  const esIAGanadora = f.metodo === "gbm" && mejorQueBaseline;
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4">
-      <Header />
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <Header esIA={esIAGanadora} beta={!esIAGanadora} />
 
       <div className="mt-3 flex flex-wrap items-end gap-x-3 gap-y-1">
         <span className="text-2xl font-bold tabular-nums">{soles(f.precio_estimado)}</span>
@@ -68,40 +76,72 @@ export default function ForecastPanel({ producto }: { producto: Producto }) {
           mejorQueBaseline ? "bg-emerald-50 text-emerald-800" : "bg-slate-100 text-slate-600"
         }`}
       >
-        {mejorQueBaseline ? (
+        {esIAGanadora ? (
+          <>
+            El modelo de IA le gana al baseline ingenuo
+            {mejoraPct != null && (
+              <span className="font-medium tabular-nums"> ({mejoraPct.toFixed(0)}% menos error)</span>
+            )}
+            , validado walk-forward (sin mirar el futuro). El error menor es mejor.
+          </>
+        ) : mejorQueBaseline ? (
           <>
             Mejor que el baseline ingenuo
             {mejoraPct != null && (
-              <span className="font-medium tabular-nums"> (−{mejoraPct.toFixed(0)}% de error)</span>
+              <span className="font-medium tabular-nums"> ({mejoraPct.toFixed(0)}% menos error)</span>
             )}
             . El error menor es mejor.
           </>
         ) : (
-          <>Igual o peor que el baseline ingenuo. Tomar el pronóstico con cautela.</>
+          <>Igual o peor que el baseline ingenuo aquí. Tomar el pronóstico con cautela.</>
         )}
       </div>
 
       <p className="mt-3 text-[11px] leading-relaxed text-slate-400">
-        BETA, en camino a la predicción con IA. Hoy parte de baselines de precio: con la data disponible
-        el volumen aún no mejora la predicción (ver nota metodológica). Referencial, no asesoría de compra.
+        {esIAGanadora ? (
+          <>
+            Modelo GBM (árboles con lags de precio, calendario y feriados), evaluado walk-forward
+            anti-leakage. El volumen de ingreso se probó y no mejora la predicción del precio (ver
+            nota metodológica), por eso no entra como predictor. Referencial, no asesoría de compra.
+          </>
+        ) : (
+          <>
+            En camino a la predicción con IA. Para este producto el modelo aún no supera de forma
+            clara al baseline de precio; el volumen tampoco mejora la predicción (ver nota
+            metodológica). Referencial, no asesoría de compra.
+          </>
+        )}
       </p>
     </div>
   );
 }
 
-function Header() {
+function Header({ esIA, beta }: { esIA: boolean; beta: boolean }) {
   return (
-    <div className="flex items-center gap-2">
-      <h3 className="text-sm font-semibold">Pronóstico a 1 día</h3>
-      <span className="text-[10px] uppercase tracking-wide rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 font-medium">
-        beta
-      </span>
+    <div className="flex flex-wrap items-center gap-2">
+      <h3 className="text-sm font-semibold">
+        {esIA ? "Pronóstico con IA · 1 día" : "Pronóstico a 1 día"}
+      </h3>
+      {esIA && (
+        <span className="text-[10px] uppercase tracking-wide rounded bg-emerald-50 text-emerald-700 px-1.5 py-0.5 font-medium">
+          modelo GBM · le gana al baseline
+        </span>
+      )}
+      {beta && (
+        <span className="text-[10px] uppercase tracking-wide rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 font-medium">
+          beta
+        </span>
+      )}
     </div>
   );
 }
 
 function metodoLegible(m: string): string {
   switch (m) {
+    case "gbm":
+      return "IA · Gradient Boosting (GBM)";
+    case "seasonal_naive":
+      return "Estacional ingenuo";
     case "media_tendencia":
       return "Media + tendencia";
     case "ar1":

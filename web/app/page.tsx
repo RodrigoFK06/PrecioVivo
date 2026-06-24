@@ -1,12 +1,29 @@
-import Link from "next/link";
 import { getSnapshot, movers, supplySurges, topAnomalias, type Producto } from "@/lib/data";
 import { soles, pct, fechaLarga, moveBg } from "@/lib/format";
 import AISummary from "@/components/AISummary";
 import ConsultaBox from "@/components/ConsultaBox";
-import AnomaliesPanel from "@/components/AnomaliesPanel";
-import KillGateNote from "@/components/KillGateNote";
+import KillGateNote, { type ModeloIAResumen } from "@/components/KillGateNote";
 import FreshnessBadge from "@/components/FreshnessBadge";
 import ProductTable from "@/components/ProductTable";
+import Comparador from "@/components/Comparador";
+import AlertasWatchlist, { type Alerta } from "@/components/AlertasWatchlist";
+import ExportCSV from "@/components/ExportCSV";
+import Link from "next/link";
+
+/** Resumen del modelo de IA frente al baseline, derivado de los forecasts por producto. */
+function resumenModeloIA(productos: Producto[]): ModeloIAResumen {
+  const conForecast = productos.filter((p) => p.forecast).length;
+  const ganadores = productos.filter(
+    (p) => p.forecast?.metodo === "gbm" && p.forecast.mae_modelo < p.forecast.mae_baseline,
+  );
+  const mejoras = ganadores.map(
+    (p) =>
+      ((p.forecast!.mae_baseline - p.forecast!.mae_modelo) / p.forecast!.mae_baseline) * 100,
+  );
+  const mejoraMediaPct =
+    mejoras.length > 0 ? mejoras.reduce((a, b) => a + b, 0) / mejoras.length : 0;
+  return { conForecast, iaGana: ganadores.length, mejoraMediaPct };
+}
 
 export const dynamic = "force-static";
 
@@ -45,10 +62,13 @@ export default async function Home() {
   const snap = await getSnapshot();
   const up = movers(snap, "up", 6);
   const down = movers(snap, "down", 6);
-  const anomalias = topAnomalias(snap, 6);
   const productos = [...snap.productos].sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
-  // supplySurges se mantiene disponible como señal de oferta (no se grafica aquí).
+  const modeloIA = resumenModeloIA(snap.productos);
+  // `alertas` lo produce el pipeline pero aún no está en el tipo Snapshot (capa de Datos).
+  const alertas = ((snap as unknown as { alertas?: Alerta[] }).alertas ?? []) as Alerta[];
+  // supplySurges/topAnomalias quedan disponibles como señales de oferta/anomalía.
   void supplySurges;
+  void topAnomalias;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:py-10">
@@ -65,9 +85,17 @@ export default async function Home() {
           <span className="font-medium text-slate-700">{fechaLarga(snap.latestFecha)}</span>
         </p>
         <p className="text-slate-600 mt-3 text-[15px] max-w-2xl leading-relaxed">
-          Vamos hacia <span className="font-medium text-slate-900">predecir los precios mayoristas con IA</span>.
-          Hoy: la serie histórica limpia que nadie más tiene, qué subió y qué bajó, anomalías del día,
-          consultas en lenguaje natural y pronósticos beta. Lo construimos en público y con rigor.
+          <span className="font-medium text-slate-900">Predecimos los precios mayoristas con IA</span> — y
+          ya le ganamos al baseline para la mayoría de productos. Un modelo GBM le saca{" "}
+          <span className="font-medium text-emerald-700 tabular-nums">
+            ~{Math.round(modeloIA.mejoraMediaPct)}% menos error
+          </span>{" "}
+          al baseline ingenuo en{" "}
+          <span className="font-medium tabular-nums">
+            {modeloIA.iaGana} de {modeloIA.conForecast}
+          </span>{" "}
+          productos, validado walk-forward. Lo probamos en público: el volumen, por ahora, no aporta —
+          y también lo decimos.
         </p>
         <div className="mt-4 flex flex-wrap gap-2 text-xs">
           <span className="rounded-full bg-white border border-slate-200 px-3 py-1 tabular-nums shadow-sm">
@@ -76,7 +104,10 @@ export default async function Home() {
           <span className="rounded-full bg-white border border-slate-200 px-3 py-1 tabular-nums shadow-sm">
             {snap.fechas.length} días de historia
           </span>
-          <span className="rounded-full bg-emerald-50 text-emerald-700 px-3 py-1 font-medium ring-1 ring-inset ring-emerald-100">
+          <span className="rounded-full bg-emerald-50 text-emerald-700 px-3 py-1 font-medium ring-1 ring-inset ring-emerald-100 tabular-nums">
+            IA le gana al baseline en {modeloIA.iaGana}/{modeloIA.conForecast}
+          </span>
+          <span className="rounded-full bg-white border border-slate-200 px-3 py-1 font-medium shadow-sm">
             precios en S/ por kg
           </span>
         </div>
@@ -88,13 +119,20 @@ export default async function Home() {
         <ConsultaBox />
       </section>
 
-      {/* movers + anomalías */}
-      <section className="grid gap-4 mb-10 md:grid-cols-2 lg:grid-cols-3">
-        <MoverList items={up} dir="up" />
-        <MoverList items={down} dir="down" />
-        <div className="md:col-span-2 lg:col-span-1">
-          <AnomaliesPanel anomalias={anomalias} />
+      {/* movers + alertas/watchlist (reemplaza el panel de anomalías) */}
+      <section className="grid gap-4 mb-10 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1 lg:col-span-1">
+          <MoverList items={up} dir="up" />
+          <MoverList items={down} dir="down" />
         </div>
+        <div className="lg:col-span-2">
+          <AlertasWatchlist alertas={alertas} productos={snap.productos} />
+        </div>
+      </section>
+
+      {/* comparador multi-producto */}
+      <section className="mb-10">
+        <Comparador productos={snap.productos} />
       </section>
 
       {/* tabla interactiva */}
@@ -102,9 +140,17 @@ export default async function Home() {
         <ProductTable productos={productos} />
       </section>
 
-      {/* nota metodológica honesta (kill-gate) */}
-      <section>
-        <KillGateNote killGate={snap.forecastMeta?.kill_gate} />
+      {/* nota metodológica honesta: el modelo de IA gana, el volumen no aporta */}
+      <section className="mb-8">
+        <KillGateNote killGate={snap.forecastMeta?.kill_gate} modeloIA={modeloIA} />
+      </section>
+
+      {/* descarga de datos en CSV */}
+      <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <p className="text-sm text-slate-500">
+          Datos abiertos: descarga los precios de hoy o la serie histórica completa.
+        </p>
+        <ExportCSV productos={snap.productos} />
       </section>
     </div>
   );

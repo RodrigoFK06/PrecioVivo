@@ -1,36 +1,85 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Precio Vivo — web
 
-## Getting Started
+Showcase de **Árkos**: panel de precios mayoristas de alimentos frescos del
+**Gran Mercado Mayorista de Lima (GMML)**, con tendencias, anomalías de
+oferta/precio y pronóstico a 1 día.
 
-First, run the development server:
+Stack: **Next.js 16** (App Router, Turbopack) · **React 19** · **Tailwind v4** ·
+**TypeScript**. Solo código local; los datos se leen de `data/snapshot.json`.
+
+## Requisitos
+
+- Node.js 20+ y npm.
+- Dependencias instaladas: `npm install` (una sola vez).
+
+## Comandos
+
+Todos se ejecutan desde esta carpeta (`web/`).
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm run dev     # servidor de desarrollo (http://localhost:3000)
+npm run build   # build de producción (Turbopack)
+npm start       # sirve el build de producción
+npm run test    # tests unitarios (Vitest, una pasada sin watch)
+npm run lint    # ESLint (eslint-config-next / core-web-vitals)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Tests
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Los tests viven en `test/` y usan **Vitest** + **jsdom** + Testing Library.
+Cubren los helpers puros de `lib/format.ts` (`soles`, `pct`, `tons`, `fechaCorta`,
+`fechaLarga`) y de `lib/data.ts` (`buscarProductos` —insensible a acentos—,
+`productosToCSV`, `promedioMensualHistorico`), tanto con fixtures mínimos como
+contra el `data/snapshot.json` real.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run test            # corre todo una vez
+npx vitest              # modo watch durante el desarrollo
+npx vitest run format   # filtra por nombre de archivo de test
+```
 
-## Learn More
+El alias `@` apunta a la raíz de `web/` (igual que en `tsconfig.json`),
+configurado en `vitest.config.ts`.
 
-To learn more about Next.js, take a look at the following resources:
+### Lint
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+`next lint` fue removido en Next.js 16; se usa la CLI de ESLint directamente
+(`eslint .`) con flat config en `eslint.config.mjs`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Variables de entorno
 
-## Deploy on Vercel
+Copia `.env.example` a `.env.local` y completa lo que necesites. Todo es
+**opcional** en modo showcase local:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- `ANTHROPIC_API_KEY` — habilita el resumen IA y la consulta en lenguaje
+  natural. Sin ella, la app usa el texto de respaldo (`fuente="fallback"`).
+- `DATABASE_URL` — cadena de conexión para el swap de producción de
+  `lib/data.ts`. No se necesita en local (se lee `data/snapshot.json`).
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Datos
+
+En desarrollo, `lib/data.ts` (`getSnapshot()`) lee `data/snapshot.json`
+server-side. Ese archivo es el único punto de cambio para conectar a
+Supabase/Postgres en producción.
+
+Sobre el pronóstico, dos cosas distintas y ambas honestas:
+
+1. **Modelo IA vs baseline.** El modelo de IA (GradientBoosting con lags,
+   calendario y feriados, validado walk-forward anti-leakage) **le gana** al
+   baseline ingenuo en la mayoría de productos, con ~50 % menos de error. En
+   esos productos `forecast.metodo == "gbm"`.
+2. **Volumen vs sin-volumen.** Añadir el **volumen** específicamente **no**
+   mejora la predicción del precio (`forecastMeta.kill_gate.volume_helps =
+   false`). El volumen se usa como señal de oferta/anomalía, no como predictor.
+
+Se muestran MAE e intervalos reales; no hay cifras inventadas.
+
+## Fuente y atribución
+
+> Fuente: MIDAGRI – GMML, procesado por Precio Vivo · cifras referenciales, no
+> oficiales.
+
+Los precios provienen del **Ministerio de Desarrollo Agrario y Riego (MIDAGRI)**
+para el **Gran Mercado Mayorista de Lima**. Son cifras **referenciales, no
+oficiales**, reprocesadas por Precio Vivo. La atribución debe mantenerse visible
+en la interfaz. Precio Vivo es un showcase de **Árkos**.

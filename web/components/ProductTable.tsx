@@ -19,7 +19,7 @@ type Column = {
 
 const COLUMNS: Column[] = [
   { key: "nombre", label: "Producto", align: "left", sortable: true },
-  { key: "precio", label: "S//kg hoy", align: "right", sortable: true },
+  { key: "precio", label: "S/ por kg", align: "right", sortable: true },
   { key: "var", label: "Δ ayer", align: "right", sortable: true },
 ];
 

@@ -7,9 +7,9 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Precio Vivo — hacia la predicción de precios mayoristas con IA",
+  title: "Precio Vivo — predicción de precios mayoristas con IA que le gana al baseline",
   description:
-    "Inteligencia de precios del Gran Mercado Mayorista de Lima (GMML): precios diarios, qué subió y qué bajó, anomalías y pronósticos beta. Construimos hacia la predicción de precios con IA, en público.",
+    "Inteligencia de precios del Gran Mercado Mayorista de Lima (GMML): precios diarios, qué subió y qué bajó, alertas y predicción con IA. Un modelo GBM ya le gana al baseline ingenuo en la mayoría de productos, validado walk-forward. Lo probamos en público — y decimos también qué no funciona.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

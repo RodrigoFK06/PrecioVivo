@@ -5,6 +5,7 @@ import { getSnapshot, getProducto, stats, type Anomalia } from "@/lib/data";
 import { soles, pct, tons, fechaLarga, moveBg, tendenciaClass } from "@/lib/format";
 import PriceChart from "@/components/PriceChart";
 import ForecastPanel from "@/components/ForecastPanel";
+import Estacional from "@/components/Estacional";
 
 function anomaliaClass(a: Anomalia): string {
   if (a.tipo === "volumen") return "bg-sky-50 text-sky-700 border border-sky-200";
@@ -103,7 +104,7 @@ export default async function ProductoPage({ params }: { params: Promise<{ slug:
 
       <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="text-sm font-semibold mb-3">
-          Precio S//kg · {p.series.length} días
+          Precio (S/ por kg) · {p.series.length} días
           <span className="font-normal text-slate-400"> · barras grises = ingreso (t)</span>
         </div>
         <PriceChart series={p.series} />
@@ -120,6 +121,10 @@ export default async function ProductoPage({ params }: { params: Promise<{ slug:
 
       <div className="mt-4">
         <ForecastPanel producto={p} />
+      </div>
+
+      <div className="mt-4">
+        <Estacional producto={p} />
       </div>
     </div>
   );
