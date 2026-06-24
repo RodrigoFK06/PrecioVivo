@@ -90,18 +90,34 @@ export default function Guia() {
     }
   }, []);
 
-  // Posiciona el spotlight sobre el objetivo del paso actual. Todo el setState
-  // ocurre dentro de `medir` (timeout/resize), no sincrónico en el cuerpo del efecto.
+  // Rastrea el objetivo del paso EN VIVO: recalcula su posición en cada scroll y
+  // resize (vía requestAnimationFrame), de modo que el spotlight siga al elemento
+  // aunque el usuario se desplace o el scroll suave aún esté en curso. Todo el
+  // setState ocurre dentro de `medir` (rAF/listeners), nunca síncrono en el efecto.
   useEffect(() => {
     if (modo !== "tour") return;
-    const el = document.querySelector(PASOS[paso]?.sel ?? "");
-    const medir = () => setRect(el ? el.getBoundingClientRect() : null);
+    const el = document.querySelector(PASOS[paso]?.sel ?? "") as HTMLElement | null;
+    let raf = 0;
+    const medir = () => {
+      raf = 0;
+      setRect(el ? el.getBoundingClientRect() : null);
+    };
+    const schedule = () => {
+      if (!raf) raf = requestAnimationFrame(medir);
+    };
     if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-    const t = setTimeout(medir, el ? 320 : 0);
-    window.addEventListener("resize", medir);
+    schedule(); // primera medición (diferida un frame)
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    // Re-medir durante ~0.9s para capturar el asentamiento del scroll suave.
+    const iv = window.setInterval(schedule, 100);
+    const stop = window.setTimeout(() => window.clearInterval(iv), 900);
     return () => {
-      clearTimeout(t);
-      window.removeEventListener("resize", medir);
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      window.clearInterval(iv);
+      window.clearTimeout(stop);
+      if (raf) cancelAnimationFrame(raf);
     };
   }, [modo, paso]);
 
@@ -213,26 +229,33 @@ export default function Guia() {
 
       {/* ── Tour con spotlight sombreado ──────────────────────────── */}
       {modo === "tour" && (
-        <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Tour guiado">
-          {/* Capa que oscurece todo menos el objetivo (box-shadow gigante = el "agujero"). */}
-          {rect ? (
+        <div
+          className="pointer-events-none fixed inset-0 z-50"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Tour guiado"
+        >
+          {/* Capa que oscurece todo menos el objetivo (box-shadow gigante = el "agujero").
+              Sin transición de posición: sigue al scroll al instante, sin arrastrarse. */}
+          {rect && rect.width > 0 ? (
             <div
-              className="pointer-events-none absolute rounded-sm transition-all duration-300"
+              className="absolute rounded-sm"
               style={{
                 top: rect.top - 8,
                 left: rect.left - 8,
                 width: rect.width + 16,
                 height: rect.height + 16,
-                boxShadow: "0 0 0 9999px rgba(20,20,15,0.66)",
-                outline: "2px solid rgba(246,243,234,0.9)",
+                boxShadow: "0 0 0 9999px rgba(12,12,13,0.62)",
+                outline: "2px solid rgba(255,255,255,0.9)",
+                outlineOffset: "0px",
               }}
             />
           ) : (
-            <div className="absolute inset-0 bg-ink/70" />
+            <div className="absolute inset-0 bg-ink/60" />
           )}
 
           {/* Tarjeta de explicación: fija abajo (bottom-sheet, mobile-first). */}
-          <div className="absolute inset-x-0 bottom-0 p-3 sm:p-4">
+          <div className="pointer-events-auto absolute inset-x-0 bottom-0 p-3 sm:p-4">
             <div className="mx-auto max-w-lg border border-rule bg-card p-5 shadow-2xl">
               <div className="flex items-center justify-between gap-3">
                 <p className="eyebrow">
