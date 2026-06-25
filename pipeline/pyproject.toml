@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "preciovivo"
+version = "0.1.0"
+description = "Inteligencia de precios mayoristas del Gran Mercado Mayorista de Lima (GMML) con IA, en tu terminal. Hecho por Árkos."
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Árkos" }]
+keywords = ["peru", "precios", "mercado", "gmml", "midagri", "cli", "ia"]
+# Solo lo que necesita la CLI (lee el snapshot + IA opcional). El pipeline de
+# datos (numpy, scikit-learn, pdfplumber, etc.) está en requirements.txt.
+dependencies = [
+    "typer>=0.12",
+    "rich>=13",
+    "openai>=1.40",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+precio = "preciovivo.cli:app"
+
+[tool.setuptools]
+packages = ["preciovivo"]

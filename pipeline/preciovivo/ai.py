@@ -347,6 +347,86 @@ def nl_query(pregunta: str, esquema_desc: str | None = None) -> dict:
     return {"sql": fallback_sql, "fuente": "fallback"}
 
 
+def answer_market_question(pregunta: str, catalogo: list[dict]) -> dict:
+    """Responde una pregunta en español usando SOLO el catálogo (para la CLI).
+
+    El modelo elige productos relevantes por slug; el texto cita nombres y nunca
+    inventa precios. Devuelve {"texto", "slugs", "fuente"}. Sin clave -> fallback
+    determinista por palabras clave sobre el catálogo.
+    """
+    fb = _answer_fallback(pregunta, catalogo)
+    client = _client()
+    if client is None:
+        return fb
+    tool = {
+        "type": "function",
+        "function": {
+            "name": "responder",
+            "description": (
+                "Responde la pregunta sobre precios mayoristas. Devuelve una frase en "
+                "español y los slugs de los productos relevantes (de más a menos). Usa "
+                "SOLO slugs presentes en el catálogo."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "texto": {"type": "string",
+                              "description": "Respuesta breve en español; no inventes precios."},
+                    "slugs": {"type": "array", "items": {"type": "string"},
+                              "description": "Slugs relevantes, de más a menos. Máximo 8."},
+                },
+                "required": ["texto", "slugs"],
+            },
+        },
+    }
+    system = (
+        "Eres el asistente de Precio Vivo (precios mayoristas del Gran Mercado "
+        "Mayorista de Lima). Responde en español, claro y conciso, sin emojis. NUNCA "
+        "inventes precios ni productos: usa solo el catálogo JSON. Precios en S/ por "
+        "kg; var_pct es la variación vs. ayer. Llama SIEMPRE a la función 'responder'."
+    )
+    try:
+        import json as _json
+        resp = client.chat.completions.create(
+            model=AI_MODEL, max_tokens=700, tools=[tool],
+            tool_choice={"type": "function", "function": {"name": "responder"}},
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user",
+                 "content": f"Catálogo (JSON):\n{_json.dumps(catalogo, ensure_ascii=False)}"
+                            f"\n\nPregunta: {pregunta}"},
+            ],
+        )
+        call = resp.choices[0].message.tool_calls[0]
+        data = _json.loads(call.function.arguments)
+        texto = (data.get("texto") or "").strip()
+        slugs = [s for s in (data.get("slugs") or []) if isinstance(s, str)][:8]
+        if texto or slugs:
+            return {"texto": texto or "Aquí están los productos relevantes.",
+                    "slugs": slugs, "fuente": "llm"}
+    except Exception:
+        pass
+    return fb
+
+
+def _answer_fallback(pregunta: str, catalogo: list[dict]) -> dict:
+    """Respuesta determinista por palabras clave (sin LLM)."""
+    q = (pregunta or "").lower()
+    items = [c for c in catalogo if c.get("precio_kg") is not None]
+    if "barat" in q or "baj" in q:
+        clave = "precio_kg" if "barat" in q else "var_pct"
+        sel = sorted(items, key=lambda c: c.get(clave) or 0)[:5]
+        texto = "Más barato / lo que más bajó hoy:"
+    elif "car" in q or "sub" in q or "alza" in q:
+        clave = "precio_kg" if "car" in q else "var_pct"
+        sel = sorted(items, key=lambda c: c.get(clave) or 0, reverse=True)[:5]
+        texto = "Más caro / lo que más subió hoy:"
+    else:
+        sel = sorted(items, key=lambda c: abs(c.get("var_pct") or 0), reverse=True)[:5]
+        texto = "Sin IA (configura AI_API_KEY para respuestas en lenguaje natural). Mayores movimientos de hoy:"
+    return {"texto": texto, "slugs": [c["slug"] for c in sel], "fuente": "fallback"}
+
+
 def _strip_sql(texto: str) -> str:
     """Limpia la respuesta del modelo: quita cercos ```sql, prefijos y ';' final."""
     s = texto.strip()

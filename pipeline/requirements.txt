@@ -8,6 +8,8 @@ psycopg==3.3.4
 pytest==9.1.1
 python-dotenv==1.2.2
 requests==2.34.2
+rich==15.0.0
 scikit-learn==1.9.0
 scipy==1.18.0
 statsmodels==0.14.6
+typer==0.26.7
