@@ -7,6 +7,7 @@ import FreshnessBadge from "@/components/FreshnessBadge";
 import ProductTable from "@/components/ProductTable";
 import Comparador from "@/components/Comparador";
 import AlertasWatchlist, { type Alerta } from "@/components/AlertasWatchlist";
+import ComoFunciona from "@/components/ComoFunciona";
 import ExportCSV from "@/components/ExportCSV";
 import Guia from "@/components/Guia";
 import Link from "next/link";
@@ -244,10 +245,17 @@ export default async function Home() {
 
       {/* ── METODOLOGÍA + DATOS ─────────────────────────────────────── */}
       <Seccion
-        titulo="Metodología y datos"
-        bajada="Qué funciona, qué no, y los datos crudos para descargar."
+        titulo="Cómo funciona y de dónde sale la data"
+        bajada="La fuente, cómo la procesamos, qué puedes esperar — y qué no."
       >
-        <div data-guia="metodologia">
+        <ComoFunciona
+          mercado={snap.mercado}
+          nProductos={snap.productos.length}
+          nFechas={snap.productos[0]?.series.length ?? 0}
+          iaGana={modeloIA.iaGana}
+          conForecast={modeloIA.conForecast}
+        />
+        <div data-guia="metodologia" className="mt-6 border-t border-rule pt-6">
           <KillGateNote killGate={snap.forecastMeta?.kill_gate} modeloIA={modeloIA} />
         </div>
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-rule pt-5">
