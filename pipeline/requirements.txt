@@ -6,6 +6,7 @@ pdfplumber==0.11.10
 psycopg-binary==3.3.4
 psycopg==3.3.4
 pytest==9.1.1
+python-dotenv==1.2.2
 requests==2.34.2
 scikit-learn==1.9.0
 scipy==1.18.0

@@ -26,6 +26,13 @@ import sqlite3
 import statistics
 from typing import Any
 
+try:  # Carga .env (clave DeepSeek, etc.) si existe — opcional, no-op sin el paquete.
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except Exception:
+    pass
+
 # Proveedor LLM agnóstico (OpenAI-compatible). Por defecto DeepSeek (barato).
 # Config por entorno (sin clave => modo fallback determinista):
 #   AI_API_KEY  (o DEEPSEEK_API_KEY)
