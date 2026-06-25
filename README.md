@@ -2,7 +2,7 @@
 
 Inteligencia de precios mayoristas del Perú con IA. Toma los reportes diarios del **Gran Mercado Mayorista de Lima (GMML)** publicados por MIDAGRI/EMMSA, los vuelve serie temporal estructurada, y los muestra en un dashboard vivo con resúmenes generados por IA.
 
-Proyecto **build-in-public** de [Árkos](#) — showcase de capacidades data + IA + full-stack.
+Proyecto **build-in-public** de [Árkos](https://www.xn--rkos-4na.com/) — showcase de capacidades data + IA + full-stack.
 
 > **Estado:** Fase 0 (setup + pipeline). Ver [`PLAN.md`](./PLAN.md) para el plan de ejecución completo (v3).
 
