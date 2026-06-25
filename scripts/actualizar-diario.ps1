@@ -1,8 +1,10 @@
-# Precio Vivo — actualización diaria.
-# Descarga el reporte del día, recalcula el pronóstico y publica el snapshot
+# Precio Vivo - actualizacion diaria.
+# Descarga el reporte del dia, recalcula el pronostico y publica el snapshot
 # (git push -> Vercel redeploya). Programar con el Programador de tareas de
-# Windows (diario, p. ej. 07:00). Debe correr desde una IP que gob.pe no bloquee
-# (tu máquina sirve; un runner de datacenter podría estar bloqueado por el WAF).
+# Windows (diario, p. ej. 08:00). Debe correr desde una IP que gob.pe no bloquee
+# (tu maquina sirve; un runner de datacenter podria estar bloqueado por el WAF).
+# NOTA: archivo en ASCII a proposito - PowerShell 5.1 lee .ps1 como ANSI y los
+# acentos/guiones largos UTF-8 rompen el parser.
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $py = Join-Path $root "pipeline\.venv\Scripts\python.exe"
@@ -10,8 +12,8 @@ $env:PYTHONIOENCODING = "utf-8"
 
 Push-Location (Join-Path $root "pipeline")
 try {
-    & $py -m preciovivo.ingest --latest 5    # nuevos días hábiles (idempotente)
-    & $py -m preciovivo.ingest --forecast    # recalcula pronósticos (~14 min) + cachea
+    & $py -m preciovivo.ingest --latest 5    # nuevos dias habiles (idempotente)
+    & $py -m preciovivo.ingest --forecast    # recalcula pronosticos (~14 min) + cachea
     & $py -m preciovivo.export               # escribe ../web/data/snapshot.json
 } finally {
     Pop-Location
@@ -27,5 +29,5 @@ if ($LASTEXITCODE -ne 0) {
     git push
     Write-Host "Publicado snapshot $fecha"
 } else {
-    Write-Host "Sin cambios en el snapshot ($fecha) — nada que publicar."
+    Write-Host "Sin cambios en el snapshot ($fecha) - nada que publicar."
 }

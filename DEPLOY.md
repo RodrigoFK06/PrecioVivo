@@ -33,7 +33,8 @@ El reporte del GMML sale cada día hábil. Para mantener el sitio al día:
 > Alternativa: un VPS/proxy residencial en Perú.
 
 ## 4. Detalles finales
-- **Contacto Árkos:** actualiza el `mailto:` en `web/app/layout.tsx` (hoy `hola@arkos.dev`, placeholder).
+- **Contacto Árkos:** el footer ya enlaza a tu correo (`rodrigoan.torresp@gmail.com`) y a tu web
+  (`árkos.com` → `https://www.xn--rkos-4na.com/`).
 - **Dominio propio (opcional):** agrégalo en Vercel y actualiza `NEXT_PUBLIC_SITE_URL`.
 - **Tamaño de git:** `snapshot.json` (~3 MB) se versiona y cambia a diario; el historial crece. Para
   un showcase está bien; si molesta, mover a Git LFS o deployar con `vercel deploy --prebuilt` (sin commitear).

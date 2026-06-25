@@ -56,7 +56,12 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           <div className="mx-auto max-w-6xl px-4 py-10">
             <div className="flex flex-col gap-5 border-b border-rule pb-8 sm:flex-row sm:items-end sm:justify-between">
               <div className="max-w-md">
-                <div className="flex items-center gap-2">
+                <a
+                  href="https://www.xn--rkos-4na.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group inline-flex items-center gap-2 transition-opacity hover:opacity-80"
+                >
                   <Image
                     src="/arkos-isotype.svg"
                     alt=""
@@ -66,7 +71,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
                     className="h-7 w-7"
                   />
                   <span className="text-xl font-semibold tracking-tight text-ink">Árkos</span>
-                </div>
+                  <span className="text-sm text-muted transition-colors group-hover:text-ink">
+                    árkos.com ↗
+                  </span>
+                </a>
                 <p className="mt-3 text-2xl font-semibold leading-snug tracking-tight text-ink">
                   ¿Necesitas software de datos + IA a medida?
                 </p>
@@ -76,7 +84,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
                 </p>
               </div>
               <a
-                href="mailto:hola@arkos.dev"
+                href="mailto:rodrigoan.torresp@gmail.com?subject=Software%20de%20datos%20%2B%20IA%20a%20medida"
                 className="shrink-0 inline-flex items-center gap-1.5 border border-ink bg-ink px-5 py-2.5 text-sm font-medium text-paper transition-opacity hover:opacity-90"
               >
                 Hablemos →
