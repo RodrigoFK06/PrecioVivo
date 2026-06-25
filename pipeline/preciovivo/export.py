@@ -76,6 +76,11 @@ def build(db_path: str = DB) -> dict:
     for p in prods.values():
         s = p["series"]
         last = s[-1]
+        # Excluir fantasmas/stale: solo productos presentes en el último reporte.
+        # (un producto cuyo último dato no es la fecha más reciente no tiene
+        # precio "de hoy" y arrastraría cifras viejas como si fueran actuales.)
+        if latest is not None and last["fecha"] != latest:
+            continue
         ayer = last["_ayer_kg"]
         hoy = last["precio_kg"]
         var = None
@@ -149,8 +154,9 @@ def _build_facts(snapshot: dict, productos: list[dict]) -> dict:
         lat = p.get("latest") or {}
         var = lat.get("var_pct")
         if var is not None:
+            pk = lat.get("precio_kg")
             movers.append({"nombre": p["nombre"], "var_pct": var,
-                           "precio_kg": lat.get("precio_kg")})
+                           "precio_kg": round(pk, 2) if pk is not None else None})
         m = lat.get("masa_hoy")
         if m is not None:
             ingreso += float(m)

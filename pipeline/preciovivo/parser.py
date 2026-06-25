@@ -278,8 +278,12 @@ def _parse_row(ws, chars, top, res: ParseResult):
         # "ACELGA" and "Acelga" resolve to the SAME product across the 2-year series
         # (verified: .title() reproduces every Title-Case name exactly).
         name = name.title()
-    if len(name) < 3 or "," in name or NON_PRODUCT.match(_deaccent(name)):
-        return  # commas only appear in the date header, never in product names
+    deacc = _deaccent(name)
+    if (len(name) < 3 or "," in name or NON_PRODUCT.match(deacc)
+            or not any(v in deacc.lower() for v in "aeiou")):
+        # commas only appear in the date header; a name without any vowel is
+        # parser garbage (e.g. "nnn"), never a real product.
+        return
 
     # skip footnote markers ("1/", "2/") that sit in the gap before the masa block
     while i < n and _center(ws[i]) < MASA_MIN:

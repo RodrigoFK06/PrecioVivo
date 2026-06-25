@@ -20,7 +20,11 @@ from preciovivo import ai
 # --------------------------------------------------------------------------- #
 @pytest.fixture(autouse=True)
 def _sin_api_key(monkeypatch):
+    # Garantiza modo fallback: borra TODAS las claves posibles (el proveedor IA
+    # es OpenAI-compatible; ai.py además carga .env, que en local trae la clave).
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("AI_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
 
 
 # --------------------------------------------------------------------------- #
