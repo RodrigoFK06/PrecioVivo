@@ -1,0 +1,309 @@
+{
+  "descripcion": "Gold set de recuperación de Precio Vivo. Cada pregunta declara PREDICADOS sobre los chunks que deben recuperarse, no ids literales: así el mismo gold set sirve para comparar granularidades (día/semana/mes), donde los ids cambian pero el hecho a recuperar es el mismo.",
+  "fuente_de_los_hechos": "Todas las cifras citadas en 'nota' se midieron sobre web/data/snapshot.json (GMML, 2024-07-01 a 2026-08-07). Ninguna es inventada; ver evals/README.md para cómo reproducirlas.",
+  "predicados": {
+    "slug": "el chunk pertenece a ese producto",
+    "tipo": "producto-periodo | producto-perfil | evento-anomalia | mercado-dia",
+    "cubre_fecha": "fecha_inicio <= fecha <= fecha_fin (independiente de la granularidad)",
+    "texto_contiene": "subcadena que debe aparecer en el texto del chunk"
+  },
+  "casos": [
+    {
+      "id": "brocoli-alza-feb-2025",
+      "pregunta": "¿por qué subió tanto el brócoli en febrero de 2025?",
+      "categoria": "producto+tiempo",
+      "debe_recuperar": [
+        {"slug": "brocoli", "tipo": "producto-periodo", "cubre_fecha": "2025-02-19"}
+      ],
+      "nota": "Alza real de +241,6% en la semana 2025-W08 (17 al 21 de febrero): el mayor movimiento semanal de la serie."
+    },
+    {
+      "id": "aji-montana-alza-abril-2026",
+      "pregunta": "¿qué pasó con el ají montaña a fines de abril de 2026?",
+      "categoria": "producto+tiempo",
+      "debe_recuperar": [
+        {"slug": "aji-montana", "tipo": "producto-periodo", "cubre_fecha": "2026-04-29"}
+      ],
+      "nota": "+204,2% en la semana 2026-W18 (27 al 30 de abril)."
+    },
+    {
+      "id": "zanahoria-alza-marzo-2025",
+      "pregunta": "¿la zanahoria subió en marzo de 2025?",
+      "categoria": "producto+tiempo",
+      "debe_recuperar": [
+        {"slug": "zanahoria", "tipo": "producto-periodo", "cubre_fecha": "2025-03-05"}
+      ],
+      "nota": "+116,0% en la semana 2025-W10 (3 al 7 de marzo)."
+    },
+    {
+      "id": "espinaca-alza-mayo-2025",
+      "pregunta": "¿cuánto se movió la espinaca en mayo de 2025?",
+      "categoria": "producto+tiempo",
+      "debe_recuperar": [
+        {"slug": "espinaca", "tipo": "producto-periodo", "cubre_fecha": "2025-05-21"}
+      ],
+      "nota": "+104,6% en la semana 2025-W21 (19 al 23 de mayo)."
+    },
+    {
+      "id": "pimiento-alza-agosto-2025",
+      "pregunta": "¿qué pasó con el pimiento morrón en agosto de 2025?",
+      "categoria": "producto+tiempo",
+      "debe_recuperar": [
+        {"slug": "pimiento-morron", "tipo": "producto-periodo", "cubre_fecha": "2025-08-20"}
+      ],
+      "nota": "+125,0% en la semana 2025-W34 (18 al 22 de agosto)."
+    },
+    {
+      "id": "vainita-alza-agosto-2025",
+      "pregunta": "¿la vainita americana estuvo cara en agosto de 2025?",
+      "categoria": "producto+tiempo",
+      "debe_recuperar": [
+        {"slug": "vainita-americana", "tipo": "producto-periodo", "cubre_fecha": "2025-08-06"}
+      ],
+      "nota": "+102,1% en la semana 2025-W32 (4 al 8 de agosto)."
+    },
+    {
+      "id": "hierba-buena-alza-marzo-2026",
+      "pregunta": "¿por qué se disparó la hierba buena a fines de marzo de 2026?",
+      "categoria": "producto+tiempo",
+      "debe_recuperar": [
+        {"slug": "hierba-buena", "tipo": "producto-periodo", "cubre_fecha": "2026-03-31"}
+      ],
+      "nota": "+111,5% en la semana 2026-W14 (30 de marzo al 1 de abril)."
+    },
+    {
+      "id": "culantro-mayo-2025",
+      "pregunta": "¿cómo estuvo el culantro en mayo de 2025?",
+      "categoria": "producto+tiempo",
+      "debe_recuperar": [
+        {"slug": "culantro", "tipo": "producto-periodo", "cubre_fecha": "2025-05-21"}
+      ],
+      "nota": "+94,5% en la semana 2025-W21."
+    },
+
+    {
+      "id": "col-china-anomalia-nov-2025",
+      "pregunta": "¿hubo alguna anomalía con la col china en noviembre de 2025?",
+      "categoria": "anomalia",
+      "debe_recuperar": [
+        {"slug": "col-china-longapa", "cubre_fecha": "2025-11-17"}
+      ],
+      "nota": "Anomalía de precio real el 2025-11-17 con z=+106,9, la más fuerte de toda la serie."
+    },
+    {
+      "id": "albahaca-anomalia-junio-2025",
+      "pregunta": "¿qué pasó de raro con la albahaca a fines de junio de 2025?",
+      "categoria": "anomalia",
+      "debe_recuperar": [
+        {"slug": "albahaca", "cubre_fecha": "2025-06-30"}
+      ],
+      "nota": "Anomalía de precio el 2025-06-30 con z=+37,7 (S/ 9,82/kg)."
+    },
+    {
+      "id": "acelga-anomalia-volumen",
+      "pregunta": "¿cuándo hubo un ingreso anormal de acelga?",
+      "categoria": "anomalia",
+      "debe_recuperar": [
+        {"slug": "acelga", "cubre_fecha": "2024-10-09"}
+      ],
+      "nota": "Anomalía de VOLUMEN el 2024-10-09 (z saturado: la historia previa era constante)."
+    },
+    {
+      "id": "anomalias-cebolla-generico",
+      "pregunta": "¿hubo movimientos raros o atípicos en la cebolla?",
+      "categoria": "anomalia",
+      "debe_recuperar": [
+        {"slug": "cebolla-cabeza-roja"}
+      ],
+      "nota": "Sin fecha: debe traer contexto de cebolla igual. Verifica que el filtro por tipo no deje la pregunta sin respuesta."
+    },
+
+    {
+      "id": "zanahoria-estacional-agosto",
+      "pregunta": "¿cuánto suele costar la zanahoria en agosto?",
+      "categoria": "estacional",
+      "debe_recuperar": [
+        {"slug": "zanahoria", "tipo": "producto-perfil", "texto_contiene": "Estacionalidad"}
+      ],
+      "nota": "Pregunta estacional: NO debe anclarse a agosto de un año concreto. La ficha trae el promedio histórico mes a mes."
+    },
+    {
+      "id": "papa-estacional",
+      "pregunta": "¿en qué época del año está más barata la papa blanca?",
+      "categoria": "estacional",
+      "debe_recuperar": [
+        {"slug": "papa-blanca", "tipo": "producto-perfil", "texto_contiene": "Estacionalidad"}
+      ],
+      "nota": "La respuesta vive en el promedio mensual histórico de la ficha."
+    },
+    {
+      "id": "tomate-promedio-historico",
+      "pregunta": "¿cuál es el precio promedio histórico del tomate?",
+      "categoria": "estacional",
+      "debe_recuperar": [
+        {"slug": "tomate", "tipo": "producto-perfil", "texto_contiene": "Precio histórico"}
+      ],
+      "nota": "Mínimo, máximo y promedio de toda la serie están en la ficha."
+    },
+
+    {
+      "id": "mas-barato-hoy",
+      "pregunta": "¿qué está más barato hoy?",
+      "categoria": "agregada",
+      "debe_recuperar": [
+        {"tipo": "mercado-dia", "texto_contiene": "más barato del día"}
+      ],
+      "nota": "Pregunta AGREGADA: no vive en ningún producto sino en el resumen del día."
+    },
+    {
+      "id": "mas-caro-hoy",
+      "pregunta": "¿cuáles son los productos más caros del mercado hoy?",
+      "categoria": "agregada",
+      "debe_recuperar": [
+        {"tipo": "mercado-dia", "texto_contiene": "más caro del día"}
+      ],
+      "nota": "Idem: agregada sobre el catálogo del día."
+    },
+    {
+      "id": "que-subio-hoy",
+      "pregunta": "¿qué subió más de precio hoy?",
+      "categoria": "agregada",
+      "debe_recuperar": [
+        {"tipo": "mercado-dia", "texto_contiene": "Mayores alzas"}
+      ],
+      "nota": "Los movers del día están en el chunk de mercado-día."
+    },
+    {
+      "id": "mercado-dia-especifico",
+      "pregunta": "¿cómo estuvo el mercado el 15 de julio de 2026?",
+      "categoria": "agregada",
+      "debe_recuperar": [
+        {"tipo": "mercado-dia", "cubre_fecha": "2026-07-15"}
+      ],
+      "nota": "Fecha explícita: el filtro estructurado debe acotar al día exacto."
+    },
+    {
+      "id": "ingreso-total-dia",
+      "pregunta": "¿cuántas toneladas ingresaron al mercado el 2026-06-10?",
+      "categoria": "agregada",
+      "debe_recuperar": [
+        {"tipo": "mercado-dia", "cubre_fecha": "2026-06-10", "texto_contiene": "Ingreso total"}
+      ],
+      "nota": "Fecha en formato ISO dentro de la pregunta."
+    },
+
+    {
+      "id": "unidad-zanahoria",
+      "pregunta": "¿en qué unidad se vende la zanahoria en el mercado mayorista?",
+      "categoria": "ficha",
+      "debe_recuperar": [
+        {"slug": "zanahoria", "tipo": "producto-perfil", "texto_contiene": "Saco Chico"}
+      ],
+      "nota": "La zanahoria se reporta por Saco Chico; el precio se normaliza a S//kg."
+    },
+    {
+      "id": "unidad-zapallo-loche",
+      "pregunta": "¿cómo se mide el zapallo loche?",
+      "categoria": "ficha",
+      "debe_recuperar": [
+        {"slug": "zapallo-loche", "tipo": "producto-perfil", "texto_contiene": "Unidad"}
+      ],
+      "nota": "Se reporta por Unidad."
+    },
+    {
+      "id": "pronostico-papa",
+      "pregunta": "¿cuál es el pronóstico de precio de la papa blanca?",
+      "categoria": "ficha",
+      "debe_recuperar": [
+        {"slug": "papa-blanca", "tipo": "producto-perfil", "texto_contiene": "Pronóstico"}
+      ],
+      "nota": "El pronóstico vigente y su MAE contra baseline están en la ficha, marcados como estimación beta."
+    },
+    {
+      "id": "correlacion-papa",
+      "pregunta": "¿qué productos se mueven junto con la papa blanca?",
+      "categoria": "ficha",
+      "debe_recuperar": [
+        {"slug": "papa-blanca", "tipo": "producto-perfil", "texto_contiene": "correlación"}
+      ],
+      "nota": "Correlación de retornos diarios, con su n de observaciones y la advertencia de que no implica causalidad."
+    },
+
+    {
+      "id": "papa-variedades",
+      "pregunta": "¿por qué subió la papa esta semana?",
+      "categoria": "agrupacion",
+      "debe_recuperar": [
+        {"slug": "papa-blanca"}
+      ],
+      "nota": "'papa' debe agrupar sus 10 variedades; basta que traiga contexto de al menos la papa blanca."
+    },
+    {
+      "id": "limon-variedades",
+      "pregunta": "¿a cuánto está el limón?",
+      "categoria": "agrupacion",
+      "debe_recuperar": [
+        {"slug": "limon-sutil-bolsa"}
+      ],
+      "nota": "'limón' existe como Bolsa y como Cajón: ambas son el mismo producto para quien pregunta."
+    },
+    {
+      "id": "papaya-no-es-papa",
+      "pregunta": "¿cuánto cuesta la papaya?",
+      "categoria": "desambiguacion",
+      "debe_recuperar": [],
+      "no_debe_recuperar": [
+        {"slug": "papa-blanca"},
+        {"slug": "papa-amarilla"},
+        {"slug": "papa-yungay"},
+        {"slug": "papa-huayro"}
+      ],
+      "nota": "NO hay papaya en el catálogo GMML, así que no hay nada correcto que recuperar y el caso NO tiene predicado positivo: lo que mide es el FALSO POSITIVO. Si 'papaya' arrastrara las papas por coincidencia de prefijo, la respuesta mezclaría dos productos distintos."
+    },
+    {
+      "id": "maracuya-nombre-raro",
+      "pregunta": "¿cuánto está el maracuyá?",
+      "categoria": "desambiguacion",
+      "debe_recuperar": [
+        {"slug": "maracuya"}
+      ],
+      "nota": "Nombre con tilde: el matching debe ser insensible a acentos."
+    },
+    {
+      "id": "ajo-morado-vs-criollo",
+      "pregunta": "¿cuál es la diferencia de precio entre el ajo morado y el ajo criollo?",
+      "categoria": "comparacion",
+      "debe_recuperar": [
+        {"slug": "ajo-morado"},
+        {"slug": "ajo-criollo-o-napuri"}
+      ],
+      "nota": "Comparación: deben entrar los DOS productos al contexto."
+    },
+    {
+      "id": "camote-comparacion",
+      "pregunta": "compara el camote amarillo con el camote morado",
+      "categoria": "comparacion",
+      "debe_recuperar": [
+        {"slug": "camote-amarillo"},
+        {"slug": "camote-morado"}
+      ],
+      "nota": "Ambas variedades deben llegar al contexto."
+    },
+
+    {
+      "id": "producto-inexistente-salmon",
+      "pregunta": "¿cuánto cuesta el salmón?",
+      "categoria": "sin-respuesta",
+      "debe_recuperar": [],
+      "no_debe_recuperar": [],
+      "nota": "El GMML no vende salmón. No hay respuesta correcta que recuperar; el caso existe para verificar que el sistema no rompe y que el modelo recibe contexto que NO afirma un precio de salmón. La métrica aquí es que no falle, no el recall."
+    },
+    {
+      "id": "pollo-no-esta-en-gmml",
+      "pregunta": "¿a cuánto está el pollo?",
+      "categoria": "sin-respuesta",
+      "debe_recuperar": [],
+      "nota": "El pollo vivo llega por SISAP/Mercado de Aves, que vive en snapshot.mercados y HOY NO entra al corpus (el corpus se construye solo sobre productos GMML). Caso documentado de limitación conocida, no de fallo."
+    }
+  ]
+}

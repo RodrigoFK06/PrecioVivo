@@ -6,7 +6,6 @@ del paquete `pipeline/`, no respecto al cwd de pytest.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -58,6 +57,110 @@ def make_row():
         base.update(kw)
         return ProductRow(producto=producto, **base)
     return _make
+
+
+@pytest.fixture
+def snapshot_sintetico():
+    """Snapshot mínimo pero realista para la capa RAG.
+
+    Cuatro productos elegidos a propósito:
+      - "Papa Blanca" y "Papa Amarilla": comparten primera palabra, para probar
+        que "papa" agrupa variedades.
+      - "Papaya": empieza igual que "papa" pero es otro producto — prueba que el
+        match respeta fronteras de palabra y no las confunde.
+      - "Tomate": con un salto de precio inyectado en una fecha conocida, para
+        que la detección de anomalías tenga algo verdadero que encontrar.
+
+    Serie de 40 días hábiles desde 2026-01-05 (lunes), que cubre varias semanas
+    ISO y dos meses. Todos los valores son deterministas.
+    """
+    from datetime import date, timedelta
+
+    def dias_habiles(inicio: date, n: int) -> list[str]:
+        out, d = [], inicio
+        while len(out) < n:
+            if d.weekday() < 5:
+                out.append(d.isoformat())
+            d += timedelta(days=1)
+        return out
+
+    fechas = dias_habiles(date(2026, 1, 5), 40)
+    # Tomate: precio plano en 3.00 y un salto claro en el día 30 (anomalía).
+    fecha_anomalia = fechas[30]
+
+    def serie(base: float, anomalia_en: str | None = None, salto: float = 0.0):
+        pts = []
+        for i, f in enumerate(fechas):
+            precio = base + (i % 3) * 0.01  # variación mínima: MAD > 0
+            if anomalia_en and f == anomalia_en:
+                precio = base + salto
+            pts.append({"fecha": f, "precio_kg": round(precio, 4),
+                        "masa_hoy": 100.0 + (i % 5), "masa_7d": 102.0,
+                        "tendencia": "Estable"})
+        return pts
+
+    def producto(nombre, slug, unidad, s):
+        ultimo = s[-1]
+        anterior = s[-2]["precio_kg"]
+        var = round(100.0 * (ultimo["precio_kg"] - anterior) / anterior, 1)
+        return {
+            "nombre": nombre, "slug": slug, "categoria": None, "unidad": unidad,
+            "equiv_kg": 1.0, "series": s,
+            "latest": {"fecha": ultimo["fecha"], "precio_kg": ultimo["precio_kg"],
+                       "precio_ayer_kg": anterior, "var_pct": var,
+                       "masa_hoy": ultimo["masa_hoy"], "masa_7d": ultimo["masa_7d"],
+                       "tendencia": ultimo["tendencia"]},
+        }
+
+    productos = [
+        producto("Papa Blanca", "papa-blanca", "Saco", serie(2.00)),
+        producto("Papa Amarilla", "papa-amarilla", "Saco", serie(3.50)),
+        producto("Papaya", "papaya", "Kilogramo", serie(4.20)),
+        producto("Tomate", "tomate", "Caja",
+                 serie(3.00, anomalia_en=fecha_anomalia, salto=5.0)),
+    ]
+    return {
+        "generatedAt": "2026-03-01T00:00:00+00:00",
+        "mercado": "Gran Mercado Mayorista de Lima (GMML)",
+        "latestFecha": fechas[-1],
+        "fechas": fechas,
+        "productCount": len(productos),
+        # Idéntica a export.ATTRIBUTION: si el fixture recortara el disclaimer,
+        # los tests no verificarían la cadena que de verdad se publica.
+        "attribution": ("Fuente: MIDAGRI – GMML, procesado por Precio Vivo · "
+                        "cifras referenciales, no oficiales."),
+        "productos": productos,
+        "anomalias": [],
+        "_fecha_anomalia": fecha_anomalia,  # ayuda para las aserciones
+    }
+
+
+@pytest.fixture
+def snapshot_en_disco(tmp_path, snapshot_sintetico, monkeypatch):
+    """Escribe el snapshot sintético y apunta la capa de servicio a él.
+
+    `service` cachea el snapshot por proceso, así que hay que invalidarlo en cada
+    test: si no, el primero que corra fija los datos para todos los demás.
+    """
+    import json
+
+    from preciovivo import service
+
+    ruta = tmp_path / "snapshot.json"
+    ruta.write_text(json.dumps(snapshot_sintetico), encoding="utf-8")
+    monkeypatch.setenv("PRECIOVIVO_EXPORT", str(ruta))
+    monkeypatch.setattr(service, "SNAPSHOT", str(ruta))
+    service.invalidar_cache()
+    yield ruta
+    service.invalidar_cache()
+
+
+@pytest.fixture
+def embedder_fake():
+    """FakeEmbedder: determinista, sin red, sin modelo, sin claves."""
+    from preciovivo.embeddings import FakeEmbedder
+
+    return FakeEmbedder(dims=64)
 
 
 @pytest.fixture
