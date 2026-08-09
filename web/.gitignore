@@ -32,6 +32,11 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...salvo la PLANTILLA. `.env*` a secas tapaba el `!.env.example` de la
+# .gitignore raiz, asi que web/.env.example nunca se commiteo — pese a que
+# README.md y DEPLOY.md mandan a leerlo. Quien clonaba el repo recibia
+# instrucciones que apuntaban a un archivo inexistente.
+!.env.example
 
 # vercel
 .vercel
