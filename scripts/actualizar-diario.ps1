@@ -13,14 +13,25 @@ $env:PYTHONIOENCODING = "utf-8"
 Push-Location (Join-Path $root "pipeline")
 try {
     & $py -m preciovivo.ingest --latest 5    # nuevos dias habiles (idempotente)
+    & $py -m preciovivo.ingest --sisap       # pollo vivo (AVES) + cross-check GMML (no bloquea)
     & $py -m preciovivo.ingest --forecast    # recalcula pronosticos (~14 min) + cachea
     & $py -m preciovivo.export               # escribe ../web/data/snapshot.json
+    # Indice RAG. --index-solo-reciente NO reescribe la parte historica: el corpus
+    # pasado es inmutable, y reescribirlo a diario engordaria el repo ~2 MB por dia
+    # (git guarda cada blob binario entero). Ver README, seccion RAG.
+    # Si falla (sin clave de embeddings, p. ej.) no debe tumbar la publicacion del
+    # snapshot: el sitio degrada a catalogo-en-contexto y sigue respondiendo.
+    try {
+        & $py -m preciovivo.ingest --index --index-solo-reciente
+    } catch {
+        Write-Warning "Indice RAG no actualizado: $_"
+    }
 } finally {
     Pop-Location
 }
 
 Set-Location $root
-git add web/data/snapshot.json
+git add web/data/snapshot.json web/data/rag-reciente.bin web/data/rag-reciente.json.gz
 $fecha = Get-Date -Format "yyyy-MM-dd"
 # Si no hubo cambios (p. ej. fin de semana sin reporte nuevo), no falla la tarea.
 git diff --cached --quiet

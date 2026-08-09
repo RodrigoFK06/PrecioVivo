@@ -13,7 +13,6 @@ from __future__ import annotations
 import os
 import sqlite3
 from contextlib import contextmanager
-from dataclasses import asdict
 from datetime import datetime, timezone
 
 GMML = ("GMML", "Gran Mercado Mayorista de Lima")

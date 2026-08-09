@@ -7,6 +7,7 @@
   python -m preciovivo.ingest --forecast          # compute & store pronosticos
   python -m preciovivo.ingest --alerts            # evalúa e imprime alertas (no envía)
   python -m preciovivo.ingest --boletin [url|pdf] # boletín multi-mercado (MMF2/frutas)
+  python -m preciovivo.ingest --sisap [pdf]       # SISAP: pollo vivo (AVES) + cross-check GMML
   python -m preciovivo.ingest --health            # source health check only
 
 Store: Postgres/Supabase if DATABASE_URL is set, else local SQLite.
@@ -192,6 +193,113 @@ def _run_boletin(store: Store, arg: str) -> None:
           f"del reporte-335 queda intacta)")
 
 
+def _sisap_aves_rows(rows: list[dict]):
+    """Filas AVES VIVAS del parse SISAP -> (fecha, [ProductRow]) para upsert.
+
+    Solo el mercado de aves se ingesta como serie propia: es data que el
+    reporte-335 NO tiene (pollo vivo, el producto de mayor reconocimiento).
+    El precio ya viene en S/ por kg -> equiv_kg=1.0. El nombre se pasa a Title
+    Case para alinear con los nombres canónicos del diccionario de productos.
+    """
+    from .parser import ProductRow
+    from .sisap import AVES_LABEL
+
+    fecha, prs = None, []
+    for r in rows:
+        if r["mercado"] != AVES_LABEL or r["precio_hoy_kg"] is None:
+            continue
+        fecha = fecha or r["fecha"]
+        prs.append(ProductRow(
+            producto=r["producto"].title(),
+            masa_ayer=None, masa_hoy=None, masa_7d=None, masa_4lun=None,
+            unidad="Kilogramo", equiv_kg=1.0,
+            precio_ayer_unit=r["precio_ayer_kg"], precio_hoy_unit=r["precio_hoy_kg"],
+            precio_7d_unit=r["prom_7d"],
+            tendencia=None,
+        ))
+    return fecha, prs
+
+
+def _run_sisap(store: Store, arg: str) -> None:
+    """Descarga+parsea el reporte SISAP: ingesta AVES y contrasta GMML (§4).
+
+    NO BLOQUEANTE: cualquier fallo reporta y sigue sin tocar los datos GMML.
+    Dos salidas:
+      1) upsert de AVES VIVAS (pollo vivo) como mercado 'AVES', fuente 'sisap';
+      2) cross-check de los precios GMML de SISAP contra nuestra BD, impreso y
+         persistido en sisap_check.json para que export lo adjunte al snapshot.
+    Los precios GMML y MMF2 de SISAP NO se upsertan: GMML ya viene del
+    reporte-335 (SISAP es su segunda opinión, mezclarlos anularía la redundancia)
+    y MMF2 llega vía el boletín con otra semántica.
+    """
+    from . import sisap as S
+
+    # PDF: ruta local si se pasó; si no, intenta descargar; si no hay red, el
+    # último cacheado.
+    path = None
+    try:
+        if arg and os.path.exists(arg):
+            path, descargado = arg, False
+        else:
+            path, _sha, _n = S.fetch_sisap()
+            descargado = True
+    except Exception as e:  # noqa: BLE001 - no debe romper el pipeline GMML
+        cached = sorted(glob.glob(os.path.join(S.RAW_DIR, f"{S.FUENTE}_*.pdf")))
+        if not cached:
+            print(f"sisap: SKIP (sin PDF: {type(e).__name__}: {e})")
+            return
+        path, descargado = cached[-1], False
+        print(f"sisap: sin red ({type(e).__name__}), usando cacheado {os.path.basename(path)}")
+
+    try:
+        rows = S.parse_sisap(path)
+    except Exception as e:  # noqa: BLE001
+        print(f"sisap: SKIP (parser: {type(e).__name__}: {e}) — GMML intacto")
+        return
+    fecha = rows[0]["fecha"] if rows else None
+    print(f"sisap: {os.path.basename(path)} "
+          f"{'(descargado)' if descargado else '(local)'} · fecha={fecha} · {len(rows)} filas")
+    if not rows or fecha is None:
+        print("sisap: SKIP (sin filas o sin fecha) — GMML intacto")
+        return
+
+    # Provenance del crudo (sha del archivo en disco), como en --boletin.
+    try:
+        import hashlib
+        with open(path, "rb") as f:
+            data = f.read()
+        store.record_raw(S.FUENTE, fecha, S.SISAP_URL, hashlib.sha256(data).hexdigest(), len(data))
+    except Exception as e:  # noqa: BLE001 - provenance opcional, no bloquea
+        print(f"  (aviso: no se registró el crudo: {type(e).__name__}: {e})")
+
+    # 1) AVES VIVAS -> serie propia (pollo vivo).
+    fecha_aves, prs = _sisap_aves_rows(rows)
+    if prs:
+        mid = store.mercado_para_codigo("AVES")
+        n = store.upsert_precios(fecha_aves, prs, S.FUENTE, mercado_id=mid)
+        print(f"  AVES (mercado_id={mid}): {n} producto(s) upserted "
+              f"({', '.join(p.producto for p in prs)})")
+    else:
+        print("  AVES: sin filas con precio — nada que upsertar")
+
+    # 2) Cross-check GMML (§4): SISAP como segunda opinión, persistido para export.
+    cc = S.cross_check(rows, _db_path(store))
+    check = S.save_check(cc, _db_path(store))
+    if not check["gmml_disponible"]:
+        # SISAP publica ~06:30; el reporte-335 del mismo día suele llegar después.
+        # Sin ningún precio GMML de esa fecha el contraste es prematuro, no una
+        # divergencia: no vale la pena listar producto por producto.
+        print(f"  cross-check GMML: prematuro — sin reporte-335 del {check['fecha']} "
+              f"en la BD todavía ({check['contrastados']} productos quedan en espera)")
+        return
+    flags = [r for r in check["resultados"] if r["flag"]]
+    print(f"  cross-check GMML: {check['coinciden']}/{check['contrastados']} coinciden "
+          f"(umbral ±{check['umbral_pct']}%) -> sisap_check.json")
+    for r in flags:
+        print(f"    [!] {r['producto']:<24.24} sisap={r['sisap_kg']!s:>6} "
+              f"gmml={r['gmml_kg']!s:>6}  {r['detalle']}")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Precio Vivo ingest")
     ap.add_argument("--latest", type=int, metavar="N")
@@ -209,7 +317,26 @@ def main(argv=None):
                     help="ingesta el boletín multi-mercado (GMML+MMF2/frutas). Acepta "
                          "una URL CDN o una ruta a PDF; sin valor usa el PDF cacheado "
                          "o el SAMPLE_URL. NO bloquea ni altera la ingesta GMML diaria")
+    ap.add_argument("--sisap", nargs="?", const="", metavar="PDF",
+                    help="ingesta el reporte SISAP-MIDAGRI: AVES VIVAS (pollo vivo) como "
+                         "serie propia + cross-check de GMML contra la BD (§4). Acepta una "
+                         "ruta a PDF local; sin valor descarga el del día (o usa el "
+                         "cacheado sin red). NO bloquea la ingesta GMML diaria")
     ap.add_argument("--health", action="store_true", help="check source URLs are live, then exit")
+    ap.add_argument("--index", action="store_true",
+                    help="construye el índice RAG desde el snapshot y publica el "
+                         "artefacto estático que lee el sitio. Requiere el snapshot "
+                         "ya exportado (python -m preciovivo.export)")
+    ap.add_argument("--index-granularidad", default="semana",
+                    choices=["dia", "semana", "mes"],
+                    help="grano de los chunks producto-periodo (default: semana; "
+                         "ver evals/run_retrieval.py --granularidad todas)")
+    ap.add_argument("--index-solo-reciente", action="store_true",
+                    help="no reescribe la parte histórica del artefacto. Es el modo "
+                         "de la corrida DIARIA: el corpus pasado es inmutable y "
+                         "reescribirlo engordaría el repo ~2 MB por día")
+    ap.add_argument("--no-publicar", action="store_true",
+                    help="construye el índice pero NO escribe el artefacto del sitio")
     args = ap.parse_args(argv)
 
     if args.health:
@@ -218,6 +345,19 @@ def main(argv=None):
         print(f"health: month_page={'OK' if mp else 'FAIL'}  dailies_found={len(ds)}"
               + (f"  latest={ds[-1].fecha}" if ds else ""))
         return 0 if ds else 1
+
+    if args.index:
+        # No toca la BD: el corpus se construye desde el snapshot ya exportado
+        # (ver preciovivo.corpus, sección FUENTE). Por eso va antes de abrir Store.
+        from .indexer import main_index
+        snapshot = os.environ.get("PRECIOVIVO_EXPORT", "../web/data/snapshot.json")
+        if not os.path.exists(snapshot):
+            print(f"No encuentro el snapshot en {snapshot}. "
+                  f"Corre primero: python -m preciovivo.export")
+            return 1
+        return main_index(snapshot, granularidad=args.index_granularidad,
+                          solo_reciente=args.index_solo_reciente,
+                          publicar=not args.no_publicar)
 
     store = Store()
     store.init_schema()
@@ -268,6 +408,8 @@ def main(argv=None):
         _run_alerts(store)
     elif args.boletin is not None:
         _run_boletin(store, args.boletin)
+    elif args.sisap is not None:
+        _run_sisap(store, args.sisap)
     else:
         targets = _targets(args)
         print(f"targets: {len(targets)} dailies"

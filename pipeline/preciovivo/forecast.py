@@ -550,10 +550,9 @@ def _query_series(db_path: str):
     dsn = os.environ.get("DATABASE_URL")
     if dsn:
         import psycopg  # lazy, igual que store.py
-        with psycopg.connect(dsn) as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql)
-                return cur.fetchall()
+        with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute(sql)
+            return cur.fetchall()
     conn = sqlite3.connect(db_path)
     try:
         return conn.execute(sql).fetchall()
@@ -851,9 +850,9 @@ def _comparacion_modelos(series_por_prod: dict[str, list[dict]]) -> dict:
                 f"{MIN_OBS_GBM} obs), sin inflar.")
         else:
             veredicto_global = (
-                f"El GBM se evaluó pero el baseline aún aguanta en todos los "
-                f"horizontes con la data disponible. Honesto: se espera que el GBM "
-                f"gane con más historia; el camino queda abierto.")
+                "El GBM se evaluó pero el baseline aún aguanta en todos los "
+                "horizontes con la data disponible. Honesto: se espera que el GBM "
+                "gane con más historia; el camino queda abierto.")
 
     return {
         "horizontes": list(HORIZONTES),

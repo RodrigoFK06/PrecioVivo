@@ -247,7 +247,7 @@ def _narrate_anomalies_fallback(anomalias: list) -> str:
 
     n = len(anomalias)
     cab = (
-        f"Se detectó 1 anomalía estadística."
+        "Se detectó 1 anomalía estadística."
         if n == 1
         else f"Se detectaron {n} anomalías estadísticas."
     )
@@ -347,12 +347,15 @@ def nl_query(pregunta: str, esquema_desc: str | None = None) -> dict:
     return {"sql": fallback_sql, "fuente": "fallback"}
 
 
-def answer_market_question(pregunta: str, catalogo: list[dict]) -> dict:
+def answer_market_question(pregunta: str, catalogo: list[dict],
+                           contexto: str | None = None) -> dict:
     """Responde una pregunta en español usando SOLO el catálogo (para la CLI).
 
     El modelo elige productos relevantes por slug; el texto cita nombres y nunca
-    inventa precios. Devuelve {"texto", "slugs", "fuente"}. Sin clave -> fallback
-    determinista por palabras clave sobre el catálogo.
+    inventa precios. `contexto` es información adicional verificable (p. ej. el
+    resultado del cross-check SISAP del día) que el asistente puede citar.
+    Devuelve {"texto", "slugs", "fuente"}. Sin clave -> fallback determinista
+    por palabras clave sobre el catálogo.
     """
     fb = _answer_fallback(pregunta, catalogo)
     client = _client()
@@ -380,13 +383,20 @@ def answer_market_question(pregunta: str, catalogo: list[dict]) -> dict:
         },
     }
     system = (
-        "Eres el asistente de Precio Vivo (precios mayoristas del Gran Mercado "
-        "Mayorista de Lima). Responde en español, claro y conciso, sin emojis. NUNCA "
+        "Eres el asistente de Precio Vivo (precios mayoristas de los mercados de "
+        "Lima). La mayoría del catálogo es del Gran Mercado Mayorista de Lima "
+        "(mercado 'GMML'), pero incluye productos de otros mercados (campo "
+        "'mercado'), como el pollo vivo del Mercado de Aves; al citarlos menciona "
+        "su mercado. Responde en español, claro y conciso, sin emojis. NUNCA "
         "inventes precios ni productos: usa solo el catálogo JSON. Precios en S/ por "
-        "kg; var_pct es la variación vs. ayer. Llama SIEMPRE a la función 'responder'."
+        "kg; var_pct es la variación vs. ayer. pronostico_kg es la predicción del "
+        "modelo (IA, beta) para el siguiente día hábil; null = producto sin "
+        "pronóstico todavía (p. ej. series recién incorporadas). Llama SIEMPRE a la "
+        "función 'responder'."
     )
     try:
         import json as _json
+        extra = f"\n\nContexto verificable:\n{contexto}" if contexto else ""
         resp = client.chat.completions.create(
             model=AI_MODEL, max_tokens=700, tools=[tool],
             tool_choice={"type": "function", "function": {"name": "responder"}},
@@ -394,7 +404,7 @@ def answer_market_question(pregunta: str, catalogo: list[dict]) -> dict:
                 {"role": "system", "content": system},
                 {"role": "user",
                  "content": f"Catálogo (JSON):\n{_json.dumps(catalogo, ensure_ascii=False)}"
-                            f"\n\nPregunta: {pregunta}"},
+                            f"{extra}\n\nPregunta: {pregunta}"},
             ],
         )
         call = resp.choices[0].message.tool_calls[0]
@@ -404,6 +414,85 @@ def answer_market_question(pregunta: str, catalogo: list[dict]) -> dict:
         if texto or slugs:
             return {"texto": texto or "Aquí están los productos relevantes.",
                     "slugs": slugs, "fuente": "llm"}
+    except Exception:
+        pass
+    return fb
+
+
+def answer_with_context(pregunta: str, contexto: str, catalogo: list[dict]) -> dict:
+    """Responde usando el contexto RECUPERADO (RAG) como evidencia principal.
+
+    Diferencia con `answer_market_question`: allí el modelo recibe el catálogo
+    entero —una línea por producto, solo el día de hoy— y por eso no puede
+    contestar "¿por qué subió la papa esta semana?": la evidencia temporal
+    sencillamente no está. Aquí recibe las ventanas de tiempo, las anomalías y la
+    ficha del producto que la recuperación seleccionó.
+
+    El catálogo se sigue pasando porque es la fuente de los slugs válidos: el
+    modelo cita productos por slug y nosotros ponemos el precio desde el dato,
+    nunca desde el texto que el modelo escriba.
+
+    Devuelve {"texto", "slugs", "fuente"}. Sin clave -> fallback determinista.
+    """
+    fb = _answer_fallback(pregunta, catalogo)
+    client = _client()
+    if client is None or not contexto:
+        return fb
+
+    system = (
+        "Eres el analista de Precio Vivo (precios mayoristas del Gran Mercado "
+        "Mayorista de Lima). Respondes en español peruano, claro y sobrio, sin "
+        "emojis.\n"
+        "REGLAS ABSOLUTAS:\n"
+        "1. Usa EXCLUSIVAMENTE los datos del contexto. Nunca inventes cifras.\n"
+        "2. El contexto trae dos bloques: el GARANTIZADO son los hechos del "
+        "producto que se preguntó; el RECUPERADO es contexto adicional por "
+        "relevancia. Prioriza el garantizado.\n"
+        "3. NO expliques CAUSAS que el dato no respalde. Los datos dicen QUÉ "
+        "pasó (precio, volumen, anomalía, co-movimiento), no POR QUÉ. Si te "
+        "preguntan por qué subió algo, describe el movimiento y el contexto "
+        "medible (volumen de ingreso, qué se movió junto, si es anómalo frente "
+        "a su historia) y di explícitamente que la causa no está en los datos.\n"
+        "4. Los pronósticos son estimaciones beta, nunca cifras del reporte.\n"
+        "5. Si el contexto no alcanza para responder, dilo."
+    )
+    tool = {
+        "type": "function",
+        "function": {
+            "name": "responder",
+            "description": ("Responde con base en el contexto recuperado y lista "
+                            "los slugs de los productos citados."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "texto": {"type": "string",
+                              "description": "Respuesta en español, 2 a 5 frases."},
+                    "slugs": {"type": "array", "items": {"type": "string"},
+                              "description": "Slugs citados, máximo 8."},
+                },
+                "required": ["texto", "slugs"],
+            },
+        },
+    }
+    try:
+        import json as _json
+        resp = client.chat.completions.create(
+            model=AI_MODEL, max_tokens=900, tools=[tool],
+            tool_choice={"type": "function", "function": {"name": "responder"}},
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user",
+                 "content": f"CONTEXTO:\n{contexto}\n\n"
+                            f"Slugs válidos: {[c['slug'] for c in catalogo]}\n\n"
+                            f"Pregunta: {pregunta}"},
+            ],
+        )
+        call = resp.choices[0].message.tool_calls[0]
+        data = _json.loads(call.function.arguments)
+        texto = (data.get("texto") or "").strip()
+        slugs = [s for s in (data.get("slugs") or []) if isinstance(s, str)][:8]
+        if texto:
+            return {"texto": texto, "slugs": slugs, "fuente": "llm-rag"}
     except Exception:
         pass
     return fb

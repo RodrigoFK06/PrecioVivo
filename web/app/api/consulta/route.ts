@@ -3,6 +3,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import OpenAI from "openai";
 import { buscarProductos, type Producto, type Snapshot } from "@/lib/data";
+import { aPrompt, recuperar } from "@/lib/rag";
 
 // Proveedor LLM agnóstico (OpenAI-compatible). Por defecto DeepSeek (barato).
 // Sin clave => modo fallback por palabras clave. Local/gratis: AI_BASE_URL=
@@ -19,12 +20,16 @@ type Fila = {
   slug: string;
   precio_kg: number | null;
   var_pct: number | null;
+  /** Presente solo en productos de otros mercados (sin página /p/[slug]). */
+  mercado?: string;
 };
 
 type Respuesta = {
   texto: string;
   productos: Fila[];
-  fuente?: "llm" | "fallback";
+  /** 'llm-rag' = el modelo respondió sobre contexto RECUPERADO (serie, anomalías,
+   *  ficha). 'llm' = sobre el catálogo del día, sin profundidad temporal. */
+  fuente?: "llm" | "llm-rag" | "fallback";
 };
 
 const fila = (p: Producto): Fila => ({
@@ -33,6 +38,23 @@ const fila = (p: Producto): Fila => ({
   precio_kg: p.latest.precio_kg,
   var_pct: p.latest.var_pct,
 });
+
+// Productos de OTROS mercados (pollo vivo vía SISAP, frutas del boletín):
+// también son datos reales del snapshot y la consulta debe conocerlos — si no,
+// "precio del pollo" respondería que no hay aves cuando sí las mostramos.
+function extrasDe(snap: Snapshot): (Fila & { mercado: string })[] {
+  return (snap.mercados ?? []).flatMap((m) =>
+    m.productos
+      .filter((p) => p.precio_kg != null)
+      .map((p) => ({
+        nombre: p.nombre,
+        slug: p.slug,
+        precio_kg: p.precio_kg,
+        var_pct: p.var_pct,
+        mercado: m.nombre,
+      })),
+  );
+}
 
 // Carga el snapshot directamente (server-side). No depende de getSnapshot para
 // evitar cualquier acoplamiento; es la misma fuente (data/snapshot.json).
@@ -150,6 +172,26 @@ function fallback(q: string, snap: Snapshot): Respuesta {
     };
   }
 
+  // Búsqueda en otros mercados (pollo vivo del Mercado de Aves, frutas MMF2).
+  const norm2 = (s: string) =>
+    s
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .toLowerCase()
+      .trim();
+  const ex = extrasDe(snap).filter((e) => norm2(e.nombre).includes(norm2(q)));
+  if (q.trim() && ex.length) {
+    const r = ex.slice(0, 8);
+    return {
+      texto:
+        r.length === 1
+          ? `${r[0].nombre} está a ${soles(r[0].precio_kg)}/kg en el ${r[0].mercado} (${pct(r[0].var_pct)} vs ayer).`
+          : `Encontré ${r.length} productos en otros mercados que coinciden con "${q.trim()}".`,
+      productos: r,
+      fuente: "fallback",
+    };
+  }
+
   // Sin intención reconocida: orientación honesta.
   return {
     texto:
@@ -168,13 +210,39 @@ async function conLLM(q: string, snap: Snapshot): Promise<Respuesta> {
   const client = new OpenAI({ apiKey: AI_API_KEY, baseURL: AI_BASE_URL });
 
   // Catálogo compacto para el contexto: hechos numéricos, no documentos fuente.
-  const catalogo = snap.productos.map((p) => ({
-    slug: p.slug,
-    nombre: p.nombre,
-    precio_kg: p.latest.precio_kg,
-    var_pct: p.latest.var_pct,
-    tendencia: p.latest.tendencia,
-  }));
+  // Incluye los productos de otros mercados (pollo vivo, frutas) con su mercado.
+  const catalogo = [
+    ...snap.productos.map((p) => ({
+      slug: p.slug,
+      nombre: p.nombre,
+      precio_kg: p.latest.precio_kg,
+      var_pct: p.latest.var_pct,
+      tendencia: p.latest.tendencia,
+      pronostico_kg: p.forecast?.precio_estimado ?? null,
+      mercado: "GMML",
+    })),
+    ...extrasDe(snap).map((e) => ({
+      slug: e.slug,
+      nombre: e.nombre,
+      precio_kg: e.precio_kg,
+      var_pct: e.var_pct,
+      tendencia: null as string | null,
+      pronostico_kg: null as number | null,
+      mercado: e.mercado,
+    })),
+  ];
+
+  // Contexto de verificación: el asistente debe poder responder "¿esto está
+  // corroborado?" con el cross-check SISAP del día, no con un "no sé".
+  const v = snap.verificacion;
+  let contexto = "";
+  if (v && v.contrastados > 0) {
+    contexto =
+      `\n\nContexto verificable:\nLos precios GMML se contrastan a diario contra ` +
+      `SISAP-MIDAGRI (publicación independiente). Último contraste (${v.fecha}): ` +
+      `${v.coinciden}/${v.contrastados} coinciden dentro de ±${v.umbral_pct}%.` +
+      (v.gmml_disponible ? "" : " (El contraste de ese día quedó pendiente de completar.)");
+  }
 
   const tool = {
     type: "function" as const,
@@ -202,10 +270,15 @@ async function conLLM(q: string, snap: Snapshot): Promise<Respuesta> {
   };
 
   const sistema = [
-    "Eres el asistente de Precio Vivo, sobre precios mayoristas del Gran Mercado Mayorista de Lima.",
+    "Eres el asistente de Precio Vivo, sobre precios mayoristas de los mercados de Lima.",
+    "La mayoría del catálogo es del Gran Mercado Mayorista de Lima (mercado 'GMML'), pero",
+    "también incluye productos de otros mercados (campo 'mercado'), como el pollo vivo",
+    "del Mercado de Aves; al citarlos menciona su mercado.",
     "Responde SIEMPRE en español, claro y conciso, sin emojis.",
     "NUNCA inventes precios ni productos: usa únicamente el catálogo JSON que se te entrega.",
     "Precios en soles (S/) por kilogramo. var_pct es la variación vs. el día anterior.",
+    "pronostico_kg es la predicción del modelo (IA, beta) para el siguiente día hábil;",
+    "null = producto sin pronóstico todavía (p. ej. series recién incorporadas).",
     "Para comparativos (más caro/barato, subió/bajó) ordena usando el catálogo y devuelve los slugs.",
     "Si la pregunta no se puede responder con los datos, dilo honestamente.",
     "Devuelve tu respuesta SIEMPRE llamando a la herramienta 'responder'.",
@@ -220,7 +293,7 @@ async function conLLM(q: string, snap: Snapshot): Promise<Respuesta> {
       { role: "system", content: sistema },
       {
         role: "user",
-        content: `Catálogo (JSON):\n${JSON.stringify(catalogo)}\n\nPregunta del usuario: ${q}`,
+        content: `Catálogo (JSON):\n${JSON.stringify(catalogo)}${contexto}\n\nPregunta del usuario: ${q}`,
       },
     ],
   });
@@ -246,10 +319,16 @@ async function conLLM(q: string, snap: Snapshot): Promise<Respuesta> {
   // Mapea slugs -> productos REALES del snapshot. Filtra slugs inexistentes
   // (el precio sale del snapshot, nunca del modelo).
   const porSlug = new Map(snap.productos.map((p) => [p.slug, p]));
+  const porSlugExtra = new Map(extrasDe(snap).map((e) => [e.slug, e]));
   const productos: Fila[] = [];
   for (const s of slugs.slice(0, 8)) {
     const p = porSlug.get(s);
-    if (p) productos.push(fila(p));
+    if (p) {
+      productos.push(fila(p));
+      continue;
+    }
+    const e = porSlugExtra.get(s);
+    if (e) productos.push(e);
   }
 
   if (!texto && productos.length === 0) return fallback(q, snap);
@@ -259,6 +338,86 @@ async function conLLM(q: string, snap: Snapshot): Promise<Respuesta> {
     productos,
     fuente: "llm",
   };
+}
+
+// ---------------------------------------------------------------------------
+// RAG: el modelo responde sobre CONTEXTO RECUPERADO, no sobre el catálogo.
+//
+// La diferencia práctica: conLLM le manda una línea por producto (precio de hoy,
+// variación vs ayer). Con eso no se puede contestar "¿por qué subió la papa esta
+// semana?" — la evidencia temporal no está en el prompt. Aquí el modelo recibe
+// las ventanas semanales, las anomalías detectadas y la ficha del producto.
+// ---------------------------------------------------------------------------
+async function conRAG(q: string, snap: Snapshot): Promise<Respuesta | null> {
+  const catalogo = Object.fromEntries(snap.productos.map((p) => [p.slug, p.nombre]));
+  const ctx = await recuperar(q, catalogo, snap.latestFecha ?? null);
+  // Sin contexto recuperado no hay nada que RAG aporte sobre el camino normal.
+  if (ctx.degradado && !ctx.piso.length) return null;
+  const contexto = aPrompt(ctx);
+  if (!contexto) return null;
+
+  const client = new OpenAI({ apiKey: AI_API_KEY, baseURL: AI_BASE_URL });
+  const tool = {
+    type: "function" as const,
+    function: {
+      name: "responder",
+      description:
+        "Responde con base en el contexto recuperado y lista los slugs de los productos citados.",
+      parameters: {
+        type: "object",
+        properties: {
+          texto: { type: "string", description: "Respuesta en español, 2 a 5 frases." },
+          slugs: { type: "array", items: { type: "string" }, description: "Slugs citados, máximo 8." },
+        },
+        required: ["texto", "slugs"],
+      },
+    },
+  };
+  const sistema = [
+    "Eres el analista de Precio Vivo (precios mayoristas del Gran Mercado Mayorista de Lima).",
+    "Respondes en español peruano, claro y sobrio, sin emojis.",
+    "REGLAS ABSOLUTAS:",
+    "1. Usa EXCLUSIVAMENTE los datos del contexto. Nunca inventes cifras.",
+    "2. El bloque GARANTIZADO son los hechos del producto preguntado; el RECUPERADO es contexto por relevancia. Prioriza el garantizado.",
+    "3. NO expliques CAUSAS que el dato no respalde. Los datos dicen QUÉ pasó (precio, volumen, anomalía, co-movimiento), no POR QUÉ.",
+    "   Si preguntan por qué subió algo, describe el movimiento y el contexto medible, y di que la causa no está en los datos.",
+    "4. Los pronósticos son estimaciones beta, nunca cifras del reporte.",
+    "5. Si el contexto no alcanza, dilo.",
+  ].join("\n");
+
+  const resp = await client.chat.completions.create({
+    model: AI_MODEL,
+    max_tokens: 900,
+    tools: [tool],
+    tool_choice: { type: "function", function: { name: "responder" } },
+    messages: [
+      { role: "system", content: sistema },
+      { role: "user", content: `CONTEXTO:\n${contexto}\n\nPregunta del usuario: ${q}` },
+    ],
+  });
+
+  const call = resp.choices[0]?.message?.tool_calls?.[0];
+  if (!call || call.type !== "function") return null;
+  let input: { texto?: unknown; slugs?: unknown };
+  try {
+    input = JSON.parse(call.function.arguments) as { texto?: unknown; slugs?: unknown };
+  } catch {
+    return null;
+  }
+  const texto = typeof input.texto === "string" ? input.texto : "";
+  if (!texto) return null;
+  const slugs = Array.isArray(input.slugs)
+    ? input.slugs.filter((s): s is string => typeof s === "string")
+    : [];
+
+  // El precio SIEMPRE sale del snapshot, nunca del texto del modelo.
+  const porSlug = new Map(snap.productos.map((p) => [p.slug, p]));
+  const productos: Fila[] = [];
+  for (const s of slugs.slice(0, 8)) {
+    const p = porSlug.get(s);
+    if (p) productos.push(fila(p));
+  }
+  return { texto, productos, fuente: "llm-rag" };
 }
 
 // ---------------------------------------------------------------------------
@@ -293,11 +452,22 @@ export async function POST(request: Request) {
     );
   }
 
+  if (!AI_API_KEY) return NextResponse.json(fallback(q, snap) satisfies Respuesta);
+
+  // Escalera de degradación, de más a menos capaz. Cada peldaño responde con
+  // datos reales; lo que cambia es cuánta evidencia ve el modelo.
+  //   1. RAG        — contexto recuperado (serie, anomalías, ficha)
+  //   2. catálogo   — una línea por producto, solo el día de hoy
+  //   3. fallback   — palabras clave, sin modelo
   try {
-    const r = AI_API_KEY ? await conLLM(q, snap) : fallback(q, snap);
-    return NextResponse.json(r satisfies Respuesta);
+    const conRag = await conRAG(q, snap);
+    if (conRag) return NextResponse.json(conRag satisfies Respuesta);
   } catch {
-    // Si el LLM falla (red, cuota, etc.), degradamos al fallback con gracia.
+    // Índice ausente, sin clave de embeddings o el proveedor falló: se sigue.
+  }
+  try {
+    return NextResponse.json((await conLLM(q, snap)) satisfies Respuesta);
+  } catch {
     return NextResponse.json(fallback(q, snap) satisfies Respuesta);
   }
 }

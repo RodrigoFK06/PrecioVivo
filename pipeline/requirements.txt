@@ -13,3 +13,13 @@ scikit-learn==1.9.0
 scipy==1.18.0
 statsmodels==0.14.6
 typer==0.26.7
+
+# --- Capa RAG ---
+# sqlite-vec: k-NN sobre la SQLite que el proyecto ya usa. Opcional: el backend
+#   por defecto (NumpyIndex) es exacto y no necesita nada.
+# model2vec: embebedor LOCAL sin claves. Inferencia en numpy puro — a propósito
+#   NO se usa sentence-transformers, que arrastra torch (~2,5 GB) para un
+#   pipeline cuyas demás dependencias suman una fracción de eso.
+# Los tests no necesitan ninguno de los dos: usan FakeEmbedder.
+sqlite-vec==0.1.9
+model2vec==0.8.2

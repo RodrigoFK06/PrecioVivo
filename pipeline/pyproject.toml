@@ -17,10 +17,84 @@ dependencies = [
     "rich>=13",
     "openai>=1.40",
     "python-dotenv>=1.0",
+    "numpy>=1.26",
 ]
+
+[project.optional-dependencies]
+# Servidor MCP: el extra más chico a propósito. Alguien que solo quiere exponer
+# precios peruanos a su cliente MCP no debería instalar FastAPI ni LangGraph.
+#   pip install "preciovivo[mcp]"
+mcp = ["mcp>=2.0"]
+# API REST.
+api = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
+# Agente con orquestación LangGraph.
+agente = ["langgraph>=1.0", "langchain-core>=1.0", "langchain-openai>=1.0"]
+# Embebedor local (sin claves) e índice persistente. model2vec y NO
+# sentence-transformers: inferencia en numpy puro, ~30 MB contra ~2,5 GB de torch.
+rag = ["model2vec>=0.6", "sqlite-vec>=0.1.6"]
+todo = ["preciovivo[mcp,api,agente,rag]"]
 
 [project.scripts]
 precio = "preciovivo.cli:app"
+# Servidor MCP por stdio, que es como lo lanzan los clientes MCP.
+preciovivo-mcp = "preciovivo.mcp_server:main"
+preciovivo-api = "preciovivo.api:main"
 
 [tool.setuptools]
 packages = ["preciovivo"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = [".venv", "build", "*.egg-info"]
+
+[tool.ruff.lint]
+# Reglas que atrapan ERRORES, no las que imponen gustos. El criterio: si una
+# regla obligara a reescribir código correcto y deliberado del proyecto, no
+# entra — un linter que grita por decisiones conscientes se termina ignorando
+# entero, y con él los avisos que sí importan.
+select = [
+    "F",    # pyflakes: imports sin usar, nombres indefinidos, f-strings rotos
+    "E",    # pycodestyle (errores)
+    "W",    # pycodestyle (avisos)
+    "I",    # orden de imports
+    "B",    # bugbear: trampas reales de Python
+    "SIM",  # simplificaciones legibles
+    "PERF", # patrones lentos evitables
+]
+ignore = [
+    # El proyecto ATRAPA excepciones amplias a propósito y en sitios acotados:
+    # la capa IA degrada a fallback determinista, el exportador nunca deja caer
+    # el snapshot base por un fallo de una sección. Cada uno está comentado con
+    # su motivo. Ver export.py y ai.py.
+    "BLE001",
+    # `except: pass` con comentario explicando por qué el fallo es aceptable
+    # (p. ej. cargar .env cuando python-dotenv no está instalado).
+    "S110",
+    # `timezone.utc` es consistente en todo el código existente. Migrar a
+    # `datetime.UTC` sería churn sin beneficio.
+    "UP017",
+    # Líneas largas: se controla con line-length, no con el chequeo estricto.
+    "E501",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# En tests, los imports dentro de funciones y las variables sin usar en
+# desempaquetados son idiomáticos.
+"tests/*" = ["B011", "PERF"]
+
+# ── Módulos anteriores al linter ────────────────────────────────────────────
+# El linter se agregó junto con la API/MCP/agente. Estos archivos son del
+# pipeline de datos original y pasan sus tests; reescribirlos para satisfacer
+# reglas de estilo sería riesgo (el parser y el forecast son load-bearing) sin
+# beneficio. Los avisos quedan registrados acá, no borrados: cuando alguno de
+# estos módulos se toque de verdad, se limpia de paso.
+#
+# `cli.py` E402/SIM105 NO es deuda: reconfigura stdout a UTF-8 ANTES de importar
+# typer y rich, porque en Windows el codepage de consola rompe los sparklines y
+# los acentos. El orden de imports es el arreglo, no el problema.
+"preciovivo/cli.py" = ["E402", "SIM105", "B904", "PERF401"]
+"preciovivo/parser.py" = ["B905"]
+"preciovivo/forecast.py" = ["B007", "PERF102", "PERF401"]
+"preciovivo/boletin.py" = ["B007"]
+"preciovivo/ai.py" = ["B905", "SIM103"]

@@ -24,7 +24,6 @@ if _PIPELINE not in sys.path:
 
 from preciovivo import forecast as F  # noqa: E402
 
-
 # --- helpers de datos sintéticos ---------------------------------------------
 
 def _serie_sintetica(n: int, seed: int = 0) -> list[dict]:
@@ -289,7 +288,7 @@ def test_forecast_all_sobre_db_local_si_existe():
     res = F.forecast_all(db)
     assert set(res) == {"por_slug", "kill_gate"}
     assert len(res["por_slug"]) > 0
-    for nombre, fc in res["por_slug"].items():
+    for fc in res["por_slug"].values():
         assert set(fc) == {"metodo", "horizonte_dias", "precio_estimado",
                            "intervalo", "mae_modelo", "mae_baseline", "n_obs"}
         if fc["mae_modelo"] is not None:

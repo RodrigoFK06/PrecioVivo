@@ -242,22 +242,158 @@ def ver(producto: str = typer.Argument(..., help="Nombre o slug, p. ej. 'zanahor
     console.print()
 
 
-@app.command("pregunta", help="Pregunta en lenguaje natural sobre los precios (IA).")
+def _recuperador(snap: dict):
+    """Carga el índice RAG publicado, o None si no se puede.
+
+    Devuelve (recuperador, motivo). `motivo` explica en una línea POR QUÉ no se
+    pudo, para poder decírselo al usuario en vez de degradar en silencio: un
+    asistente que calla que perdió la mitad de sus capacidades es peor que uno
+    que avisa.
+    """
+    try:
+        from .retrieval import Recuperador
+        return Recuperador.desde_artefacto(snap), None
+    except Exception as e:  # noqa: BLE001 - la CLI nunca debe caerse por esto
+        return None, str(e).split("\n")[0]
+
+
+def _catalogo(snap: dict) -> list[dict]:
+    """Catálogo plano (GMML + otros mercados) con los hechos numéricos reales."""
+    cat = [{"slug": p["slug"], "nombre": p["nombre"],
+            "precio_kg": p["latest"].get("precio_kg"),
+            "var_pct": p["latest"].get("var_pct"),
+            "tendencia": p["latest"].get("tendencia"),
+            "pronostico_kg": (p.get("forecast") or {}).get("precio_estimado"),
+            "mercado": "GMML"} for p in snap["productos"]]
+    for m in snap.get("mercados", []):
+        for p in m["productos"]:
+            if p.get("precio_kg") is not None:
+                cat.append({"slug": p["slug"], "nombre": p["nombre"],
+                            "precio_kg": p["precio_kg"], "var_pct": p.get("var_pct"),
+                            "tendencia": None, "pronostico_kg": None,
+                            "mercado": m["nombre"]})
+    return cat
+
+
+@app.command("contexto",
+             help="Muestra QUÉ recupera el RAG para una pregunta (sin llamar al modelo).")
+def contexto(
+    texto: str = typer.Argument(..., help='p. ej. "¿por qué subió la papa esta semana?"'),
+    k: int = typer.Option(6, "--k", help="Cuántos chunks recuperados mostrar."),
+    completo: bool = typer.Option(False, "--completo", help="Imprime el texto entero."),
+) -> None:
+    snap = cargar_snapshot()
+    rec, motivo = _recuperador(snap)
+    if rec is None:
+        console.print(f"[red]Sin índice RAG.[/red] {motivo}")
+        raise typer.Exit(1)
+
+    ctx = rec.recuperar(texto, k=k)
+    c = ctx.consulta
+    console.print()
+    console.print(f"[bold white]{texto}[/bold white]")
+    detalle = Text()
+    detalle.append("productos: ", style="dim")
+    detalle.append(", ".join(sorted(c.slugs)) if c.slugs else "—", style=TEAL)
+    detalle.append("   fechas: ", style="dim")
+    detalle.append(f"{c.fecha_desde or '—'} … {c.fecha_hasta or '—'}", style=TEAL)
+    console.print(detalle)
+    console.print(f"[dim]{len(rec.chunks)} chunks indexados · "
+                  f"{ctx.n_candidatos} candidatos fusionados · "
+                  f"piso {len(ctx.piso)} · recuperados {len(ctx.recuperados)}[/dim]")
+    console.print()
+
+    def _muestra(titulo: str, filas: list[tuple[str, str, float | None]]) -> None:
+        if not filas:
+            return
+        t = Table(box=SIMPLE_HEAD, show_edge=False, pad_edge=False, expand=True)
+        t.add_column(Text(titulo, style=f"bold {TEAL}"), no_wrap=True)
+        t.add_column("Extracto", overflow="fold")
+        if any(s is not None for _, _, s in filas):
+            t.add_column("Score", justify="right", no_wrap=True)
+        for cid, cuerpo, score in filas:
+            extracto = cuerpo if completo else cuerpo.split("\n")[0][:96]
+            fila = [cid[:44], extracto]
+            if any(s is not None for _, _, s in filas):
+                fila.append(f"{score:.3f}" if score is not None else "—")
+            t.add_row(*fila)
+        console.print(t)
+        console.print()
+
+    _muestra("Garantizado (piso determinista)",
+             [(x.id, x.texto, None) for x in ctx.piso])
+    vistos = {x.id for x in ctx.piso}
+    _muestra("Recuperado (búsqueda híbrida)",
+             [(r.chunk.id, r.chunk.texto, r.score)
+              for r in ctx.recuperados if r.chunk.id not in vistos])
+
+
+@app.command("pregunta", help="Pregunta en lenguaje natural sobre los precios (IA + RAG).")
 def pregunta(texto: str = typer.Argument(..., help='p. ej. "¿qué frutas subieron esta semana?"')) -> None:
     from . import ai
     snap = cargar_snapshot()
     catalogo = [{"slug": p["slug"], "nombre": p["nombre"],
                  "precio_kg": p["latest"].get("precio_kg"),
                  "var_pct": p["latest"].get("var_pct"),
-                 "tendencia": p["latest"].get("tendencia")} for p in snap["productos"]]
+                 "tendencia": p["latest"].get("tendencia"),
+                 "pronostico_kg": (p.get("forecast") or {}).get("precio_estimado"),
+                 "mercado": "GMML"} for p in snap["productos"]]
+    # Otros mercados del snapshot (pollo vivo vía SISAP, frutas del boletín):
+    # también son datos reales — sin esto, "¿cuánto está el pollo?" negaría
+    # un precio que el dashboard sí muestra.
+    for m in snap.get("mercados", []):
+        for p in m["productos"]:
+            if p.get("precio_kg") is not None:
+                catalogo.append({"slug": p["slug"], "nombre": p["nombre"],
+                                 "precio_kg": p["precio_kg"],
+                                 "var_pct": p.get("var_pct"),
+                                 "tendencia": None, "pronostico_kg": None,
+                                 "mercado": m["nombre"]})
+    # Contexto de verificación (§4): el asistente debe poder responder "¿esto
+    # está corroborado?" con el cross-check SISAP del día, no con un "no sé".
+    v = snap.get("verificacion") or {}
+    contexto = None
+    if v.get("contrastados"):
+        contexto = (f"Los precios GMML se contrastan a diario contra SISAP-MIDAGRI "
+                    f"(publicación independiente). Último contraste ({v.get('fecha')}): "
+                    f"{v.get('coinciden')}/{v.get('contrastados')} coinciden dentro de "
+                    f"±{v.get('umbral_pct')}%.")
+        if not v.get("gmml_disponible"):
+            contexto += " (El contraste de ese día quedó pendiente de completar.)"
+    # RAG: si hay índice publicado, el modelo recibe la EVIDENCIA TEMPORAL
+    # (ventanas, anomalías, ficha) en vez de una línea por producto. Sin índice
+    # se degrada al camino anterior, y se avisa: callar que se perdió la mitad
+    # de la capacidad es peor que decirlo.
+    rec, motivo = _recuperador(snap)
     with console.status(f"[{TEAL}]Pensando…[/]", spinner="dots"):
-        res = ai.answer_market_question(texto, catalogo)
+        if rec is not None:
+            ctx = rec.recuperar(texto, k=8)
+            res = ai.answer_with_context(texto, ctx.a_prompt(), catalogo)
+            res["_rag"] = (len(ctx.piso), len(ctx.recuperados))
+        else:
+            res = ai.answer_market_question(texto, catalogo, contexto=contexto)
 
     console.print()
-    icono = "🤖" if res.get("fuente") == "llm" else "•"
+    if rec is None:
+        console.print(f"[dim]sin RAG ({motivo}) · "
+                      f"`python -m preciovivo.ingest --index` lo activa[/dim]")
+    icono = "🤖" if res.get("fuente", "").startswith("llm") else "•"
     console.print(Panel(res["texto"], title=f"{icono} [{TEAL}]Respuesta[/]",
                         border_style="grey37", padding=(1, 2)))
-    por_slug = {p["slug"]: p for p in snap["productos"]}
+    if res.get("_rag"):
+        piso, recs = res["_rag"]
+        console.print(f"[dim]contexto: {piso} hechos garantizados + {recs} "
+                      f"recuperados · `precio contexto \"…\"` para verlos[/dim]")
+    # Filas planas (nombre, precio, var) para GMML y otros mercados por igual.
+    por_slug = {p["slug"]: {"nombre": p["nombre"],
+                            "precio_kg": p["latest"].get("precio_kg"),
+                            "var_pct": p["latest"].get("var_pct")}
+                for p in snap["productos"]}
+    for m in snap.get("mercados", []):
+        for p in m["productos"]:
+            por_slug.setdefault(p["slug"], {"nombre": f"{p['nombre']} · {m['nombre']}",
+                                            "precio_kg": p.get("precio_kg"),
+                                            "var_pct": p.get("var_pct")})
     rel = [por_slug[s] for s in res.get("slugs", []) if s in por_slug]
     if rel:
         t = Table(box=SIMPLE_HEAD, show_edge=False, pad_edge=False)
@@ -265,8 +401,8 @@ def pregunta(texto: str = typer.Argument(..., help='p. ej. "¿qué frutas subier
         t.add_column("S/ kg", justify="right")
         t.add_column("Δ ayer", justify="right")
         for p in rel:
-            t.add_row(p["nombre"][:30], soles(p["latest"]["precio_kg"]),
-                      pct_text(p["latest"].get("var_pct")))
+            t.add_row(p["nombre"][:30], soles(p["precio_kg"]),
+                      pct_text(p.get("var_pct")))
         console.print(t)
     console.print()
 

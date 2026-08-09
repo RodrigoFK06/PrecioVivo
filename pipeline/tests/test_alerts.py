@@ -11,10 +11,9 @@ from __future__ import annotations
 
 import pytest
 
-from preciovivo import alerts
 from preciovivo.alerts import (
-    AlertaDisparada,
     DEFAULT_REGLAS,
+    AlertaDisparada,
     Regla,
     carga_para_emisor,
     evaluate,
