@@ -1,0 +1,118 @@
+# Precio Vivo — entorno de desarrollo completo.
+#
+#   docker compose up            db + api + web
+#   docker compose --profile indexar run --rm indexer    reconstruye el índice RAG
+#   docker compose --profile test run --rm tests         corre pytest + evals
+#
+# QUÉ APORTA POSTGRES ACÁ
+# -----------------------
+# El pipeline corre sobre SQLite y el sitio sobre snapshot.json: nada de esto
+# NECESITA Postgres. Está para dos cosas concretas:
+#   1. Ejercitar `PgVectorIndex`, que hasta ahora nunca se ejecutó contra un
+#      servidor real (su test está marcado `skipif`). Con `DATABASE_URL` seteada
+#      ese test corre y se compara contra el oráculo numpy.
+#   2. Ser el camino documentado a producción si el snapshot deja de alcanzar.
+# Si se levanta solo `api` y `web`, todo funciona igual sin la base.
+
+name: preciovivo
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-preciovivo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-preciovivo-dev}
+      POSTGRES_DB: ${POSTGRES_DB:-preciovivo}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Esquema canónico + extensión vector al inicializar la base vacía.
+      - ./pipeline/schema.sql:/docker-entrypoint-initdb.d/20-schema.sql:ro
+      - ./scripts/init-pgvector.sql:/docker-entrypoint-initdb.d/10-pgvector.sql:ro
+    healthcheck:
+      # `api` no arranca hasta que la base acepta conexiones: sin esto, el
+      # primer arranque falla siempre por una carrera y parece un bug.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-preciovivo} -d ${POSTGRES_DB:-preciovivo}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ./pipeline
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      # Falla cerrada: sin claves la API no sirve datos. En dev se pone una.
+      PRECIOVIVO_API_KEYS: ${PRECIOVIVO_API_KEYS:-dev-local}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-preciovivo}:${POSTGRES_PASSWORD:-preciovivo-dev}@db:5432/${POSTGRES_DB:-preciovivo}
+      # Opcionales: sin ellas la capa IA degrada a respuestas deterministas.
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.deepseek.com}
+      AI_MODEL: ${AI_MODEL:-deepseek-chat}
+      EMBED_API_KEY: ${EMBED_API_KEY:-}
+      EMBED_MODEL: ${EMBED_MODEL:-text-embedding-3-small}
+      EMBED_DIMS: ${EMBED_DIMS:-256}
+    volumes:
+      # Los datos se montan, no se hornean: el snapshot cambia cada día hábil y
+      # reconstruir la imagen por eso sería absurdo. Solo lectura porque la API
+      # no escribe nada.
+      - ./web/data:/data:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./web
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.deepseek.com}
+      AI_MODEL: ${AI_MODEL:-deepseek-chat}
+      EMBED_API_KEY: ${EMBED_API_KEY:-}
+      EMBED_MODEL: ${EMBED_MODEL:-text-embedding-3-small}
+      EMBED_DIMS: ${EMBED_DIMS:-256}
+    depends_on:
+      - api
+
+  # --- perfiles: no arrancan con `up`, se invocan a mano -------------------
+  indexer:
+    profiles: ["indexar"]
+    build:
+      context: ./pipeline
+    environment:
+      EMBED_API_KEY: ${EMBED_API_KEY:-}
+      EMBED_MODEL: ${EMBED_MODEL:-text-embedding-3-small}
+      EMBED_DIMS: ${EMBED_DIMS:-256}
+      # Sin clave de API cae al embebedor local (model2vec). Ese índice sirve
+      # para la CLI pero NO para el sitio: Vercel no puede correr el modelo.
+      PRECIOVIVO_EMBED_PROVIDER: ${PRECIOVIVO_EMBED_PROVIDER:-auto}
+      PRECIOVIVO_RAG_WEB: /data
+    volumes:
+      - ./web/data:/data  # escritura: acá sí publica el artefacto
+    command: ["python", "-m", "preciovivo.ingest", "--index"]
+
+  tests:
+    profiles: ["test"]
+    build:
+      context: ./pipeline
+    environment:
+      # Con la base arriba, el test de PgVectorIndex deja de saltarse y se
+      # compara contra el oráculo numpy. Es la razón principal de tener Postgres.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-preciovivo}:${POSTGRES_PASSWORD:-preciovivo-dev}@db:5432/${POSTGRES_DB:-preciovivo}
+      PRECIOVIVO_EMBED_PROVIDER: fake
+    volumes:
+      - ./web/data:/data:ro
+      - ./pipeline/tests:/app/tests:ro
+      - ./pipeline/evals:/app/evals:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["sh", "-c", "pip install pytest && pytest -q && python evals/run_retrieval.py --umbral 0.9"]
+
+volumes:
+  pgdata:

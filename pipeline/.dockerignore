@@ -1,0 +1,28 @@
+# Todo lo que no debe entrar al contexto de build del pipeline.
+# Sin esto, .venv (cientos de MB) viaja al daemon en cada build.
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+# Secretos: nunca en una imagen.
+.env
+.env.*
+!.env.example
+
+# Datos: se montan como volumen, no se hornean (ver docker-compose.yml).
+../data/
+*.db
+*.sqlite
+*.pdf
+
+# El código de tests y evals se monta en el perfil `test`; no hace falta en la
+# imagen de runtime.
+tests/
+evals/
+explore.py

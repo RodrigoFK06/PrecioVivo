@@ -1,0 +1,20 @@
+# Contexto de build del sitio.
+# node_modules se reinstala con `npm ci` dentro de la imagen: copiarlo desde el
+# host además de lento traería binarios compilados para otro sistema operativo.
+node_modules/
+.next/
+out/
+.vercel/
+*.tsbuildinfo
+
+# Secretos.
+.env
+.env.*
+!.env.example
+
+# Tests: no van a la imagen de producción.
+test/
+vitest.config.ts
+
+# OJO: data/ NO se ignora. snapshot.json y rag-*.bin se leen en runtime
+# (web/lib/data.ts y web/lib/rag.ts) y tienen que viajar en la imagen.
