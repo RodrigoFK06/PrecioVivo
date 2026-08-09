@@ -1,0 +1,179 @@
+name: Ingesta diaria
+
+# ═══════════════════════════════════════════════════════════════════════════
+# LEE ESTO ANTES DE ACTIVARLO
+#
+# El paso de descarga PROBABLEMENTE FALLE en GitHub Actions, y no es un bug de
+# este workflow.
+#
+# El harvester baja de cdn.www.gob.pe. El WAF de gob.pe no bloquea una IP
+# residencial peruana —de hecho la máquina del mantenedor lleva meses
+# descargando sin problema— pero sí puede bloquear rangos de datacenter, que es
+# exactamente donde viven los runners de GitHub. No es una hipótesis cómoda para
+# justificar correr en local: está anotado desde el día 1 en DEPLOY.md §3.
+#
+# Entonces, ¿por qué existe este archivo?
+#   1. Para que la ingesta esté LISTA el día que se resuelva el acceso — un
+#      proxy residencial peruano, un VPS en Perú, o que el WAF cambie.
+#   2. Porque el paso de VERIFICACIÓN sí funciona desde cualquier IP: no
+#      descarga nada, solo mira si el snapshot publicado envejeció. Ese es el
+#      dead-man's-switch, y es lo único de acá que aporta valor hoy.
+#
+# El trabajo `ingesta` está desactivado por defecto (`if: vars.INGESTA_EN_CI`).
+# Para probarlo: definir la variable de repositorio INGESTA_EN_CI=1, o lanzarlo
+# a mano con `forzar_ingesta`. Mientras tanto, la ingesta real corre en la
+# máquina del mantenedor vía scripts/actualizar-diario.ps1.
+# ═══════════════════════════════════════════════════════════════════════════
+
+on:
+  schedule:
+    # 12:00 UTC = 07:00 en Perú (UTC-5, sin horario de verano). El reporte del
+    # GMML suele estar publicado a esa hora.
+    - cron: "0 12 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      forzar_ingesta:
+        description: "Intentar la descarga aunque el WAF probablemente la bloquee"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # el job de ingesta commitea el snapshot
+  issues: write     # el dead-man's-switch abre un issue
+
+concurrency:
+  group: ingesta-diaria
+  cancel-in-progress: false   # nunca cortar una ingesta a medio commitear
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Dead-man's-switch: lo único que aporta valor hoy.
+  # ─────────────────────────────────────────────────────────────────────────
+  frescura:
+    name: ¿El dato envejeció?
+    runs-on: ubuntu-latest
+    outputs:
+      ok: ${{ steps.revisar.outputs.ok }}
+      detalle: ${{ steps.revisar.outputs.detalle }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - run: pip install holidays
+
+      - id: revisar
+        # `|| true` a propósito: el script devuelve 1 cuando el dato está viejo,
+        # y acá eso NO debe cortar el workflow — el paso siguiente es justamente
+        # el que tiene que reaccionar abriendo el issue.
+        run: |
+          python scripts/frescura.py --json > frescura.json || true
+          cat frescura.json
+          echo "ok=$(python -c "import json;print(json.load(open('frescura.json'))['ok'])")" >> "$GITHUB_OUTPUT"
+          echo "detalle=$(python -c "import json;print(json.load(open('frescura.json'))['detalle'])")" >> "$GITHUB_OUTPUT"
+
+      - name: Avisar si se perdieron días hábiles
+        if: steps.revisar.outputs.ok != 'True'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const detalle = ${{ toJSON(steps.revisar.outputs.detalle) }};
+            const titulo = "Precio Vivo: el dato dejó de actualizarse";
+
+            // Reusar el issue abierto en vez de crear uno por día: un
+            // pipeline muerto una semana generaría cinco issues idénticos y
+            // la señal se perdería en el ruido.
+            const abiertos = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: "open", labels: "frescura",
+            });
+            const cuerpo = [
+              detalle,
+              "",
+              "El sitio sigue en pie y responde 200, pero muestra datos viejos.",
+              "Este es el modo de falla que un healthcheck normal no detecta.",
+              "",
+              "Qué revisar, en orden:",
+              "1. La tarea programada de Windows que corre `scripts/actualizar-diario.ps1`.",
+              "2. Que la fuente publique: `python -m preciovivo.ingest --health`.",
+              "3. Si el parser se rompió por un cambio de formato (el tripwire de",
+              "   encabezados lo bloquearía y quedaría registrado en el log).",
+              "",
+              `Detectado por \`.github/workflows/ingesta-diaria.yml\` el ${new Date().toISOString()}.`,
+            ].join("\n");
+
+            if (abiertos.data.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: abiertos.data[0].number, body: cuerpo,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title: titulo, body: cuerpo, labels: ["frescura"],
+              });
+            }
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Ingesta: preparada, desactivada. Ver la nota de arriba.
+  # ─────────────────────────────────────────────────────────────────────────
+  ingesta:
+    name: Descargar y publicar (bloqueado por el WAF de gob.pe)
+    runs-on: ubuntu-latest
+    if: vars.INGESTA_EN_CI == '1' || inputs.forzar_ingesta
+    defaults:
+      run:
+        working-directory: pipeline
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
+
+      - run: |
+          pip install -r requirements.txt
+          pip install --no-deps -e .
+
+      - name: Salud de la fuente
+        # Antes de intentar nada: si esto falla, es el WAF y no el harvester.
+        # Distinguirlo ahorra una hora de depuración a quien lea el log.
+        run: python -m preciovivo.ingest --health
+
+      - name: Ingesta del día
+        run: python -m preciovivo.ingest --latest 5
+
+      - name: Cross-check SISAP
+        continue-on-error: true   # no bloquea la ingesta GMML (DEPLOY.md §3)
+        run: python -m preciovivo.ingest --sisap
+
+      - name: Pronósticos
+        run: python -m preciovivo.ingest --forecast
+
+      - name: Exportar snapshot
+        run: python -m preciovivo.export
+
+      - name: Índice RAG (solo la cola reciente)
+        continue-on-error: true
+        env:
+          EMBED_API_KEY: ${{ secrets.EMBED_API_KEY }}
+        # `--index-solo-reciente`: el corpus histórico es inmutable, y
+        # reescribirlo a diario engordaría el repo ~2 MB por día. Ver README.
+        run: python -m preciovivo.ingest --index --index-solo-reciente
+
+      - name: Publicar
+        working-directory: .
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add web/data/snapshot.json web/data/rag-reciente.bin web/data/rag-reciente.json.gz
+          if git diff --cached --quiet; then
+            echo "Sin cambios (probablemente feriado o el reporte no salió)."
+          else
+            git commit -m "data: snapshot $(date -u +%Y-%m-%d)"
+            git push
+          fi

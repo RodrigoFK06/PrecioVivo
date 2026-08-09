@@ -1,0 +1,141 @@
+name: CI
+
+# Corre en cada push y PR. Tres trabajos independientes para que un fallo del
+# sitio no oculte un fallo del pipeline (y al revés): con un solo job, el primer
+# `exit 1` corta y hay que arreglar a ciegas.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  # Cancela corridas viejas de la misma rama: nadie necesita el resultado de un
+  # commit que ya fue reemplazado.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pipeline:
+    name: Pipeline (pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pipeline
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
+
+      - name: Instalar dependencias
+        run: |
+          pip install -r requirements.txt
+          pip install ruff
+          # Extras de los transportes (API, MCP, agente). Fuera de
+          # requirements.txt porque el pipeline de datos no los necesita.
+          pip install fastapi "uvicorn[standard]" httpx mcp langgraph \
+                      langchain-core langchain-openai
+          pip install --no-deps -e .
+
+      - name: Lint
+        run: ruff check preciovivo tests evals
+
+      - name: Tests
+        env:
+          # Sin red ni claves: FakeEmbedder es determinista y no descarga nada.
+          # Si un test necesitara una clave, el CI sería un secreto más que
+          # rotar y una excusa para que falle "por el entorno".
+          PRECIOVIVO_EMBED_PROVIDER: fake
+        run: pytest -q
+
+  evaluaciones:
+    name: Evaluaciones de IA
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pipeline
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
+
+      - name: Instalar dependencias
+        run: |
+          pip install -r requirements.txt
+          pip install --no-deps -e .
+
+      - name: Recuperación (falla si el recall baja del umbral)
+        env:
+          PRECIOVIVO_EMBED_PROVIDER: fake
+        # El umbral es la razón de ser de este job: sin él, una regresión en la
+        # recuperación pasaría verde porque ningún test unitario la ve.
+        #
+        # OJO al leer el número: con el embebedor `fake` se mide la MECÁNICA
+        # (filtro estructurado, piso determinista, fusión), no calidad semántica.
+        # Es lo correcto para CI —determinista, sin red, sin secretos— pero no es
+        # una medida de qué tan bien entiende las preguntas. Eso se mide a mano
+        # con `--embedder local`.
+        run: python evals/run_retrieval.py --umbral 0.9 -v
+
+      - name: Reporte comparativo de granularidad
+        env:
+          PRECIOVIVO_EMBED_PROVIDER: fake
+        # Informativo: son los números que cita el README. Si cambian, el diff
+        # del log lo muestra.
+        run: python evals/run_retrieval.py --granularidad todas --json
+
+  web:
+    name: Sitio (vitest + tsc + eslint)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests
+        # Incluye web/test/rag.test.ts, que espeja los casos de
+        # pipeline/tests/test_retrieval.py. Son dos implementaciones de las
+        # mismas reglas: si una deriva, este job lo detecta.
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  frescura:
+    name: Dead-man's-switch (frescura del dato)
+    runs-on: ubuntu-latest
+    # Informativo en PRs: un snapshot viejo en una rama no debe bloquear un
+    # merge. La alerta que importa es la del workflow programado.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install holidays
+      - run: python scripts/frescura.py --json
