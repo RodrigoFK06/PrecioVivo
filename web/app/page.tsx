@@ -1,9 +1,12 @@
-import { getSnapshot, movers, supplySurges, type Producto } from "@/lib/data";
+import { getSnapshot, movers, supplySurges, mercadosExtra, type Producto } from "@/lib/data";
 import { soles, pct, tons, fechaLarga, moveBg } from "@/lib/format";
 import AISummary from "@/components/AISummary";
 import ConsultaBox from "@/components/ConsultaBox";
 import KillGateNote, { type ModeloIAResumen } from "@/components/KillGateNote";
 import FreshnessBadge from "@/components/FreshnessBadge";
+import VerificacionBadge from "@/components/VerificacionBadge";
+import VerificacionPanel from "@/components/VerificacionPanel";
+import MercadosExtra from "@/components/MercadosExtra";
 import ProductTable from "@/components/ProductTable";
 import Comparador from "@/components/Comparador";
 import AlertasWatchlist, { type Alerta } from "@/components/AlertasWatchlist";
@@ -116,6 +119,7 @@ function ListaMovers({
 
 export default async function Home() {
   const snap = await getSnapshot();
+  const otrosMercados = mercadosExtra(snap);
   const up = movers(snap, "up", 5);
   const down = movers(snap, "down", 5);
   const surge = supplySurges(snap, 5);
@@ -150,6 +154,7 @@ export default async function Home() {
             {snap.mercado} · {fechaLarga(snap.latestFecha)}
           </p>
           <FreshnessBadge latestFecha={snap.latestFecha} generatedAt={snap.generatedAt} />
+          <VerificacionBadge verificacion={snap.verificacion} />
         </div>
 
         <h1 className="text-4xl sm:text-5xl lg:text-6xl font-semibold tracking-[-0.03em] leading-[1.04] text-ink mt-3 max-w-3xl">
@@ -243,6 +248,16 @@ export default async function Home() {
         <AlertasWatchlist alertas={alertas} productos={productosLigeros} />
       </Seccion>
 
+      {/* ── OTROS MERCADOS (SISAP/aves, boletín MMF2) ──────────────── */}
+      {otrosMercados.length > 0 && (
+        <Seccion
+          titulo="Otros mercados"
+          bajada="Más allá del GMML: pollo vivo del Mercado de Aves (vía SISAP–MIDAGRI) y otros mercados mayoristas de Lima."
+        >
+          <MercadosExtra mercados={otrosMercados} />
+        </Seccion>
+      )}
+
       {/* ── METODOLOGÍA + DATOS ─────────────────────────────────────── */}
       <Seccion
         titulo="Cómo funciona y de dónde sale la data"
@@ -258,6 +273,11 @@ export default async function Home() {
         <div data-guia="metodologia" className="mt-6 border-t border-rule pt-6">
           <KillGateNote killGate={snap.forecastMeta?.kill_gate} modeloIA={modeloIA} />
         </div>
+        {snap.verificacion && (
+          <div className="mt-6 border-t border-rule pt-6">
+            <VerificacionPanel verificacion={snap.verificacion} />
+          </div>
+        )}
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-rule pt-5">
           <p className="text-sm text-muted">
             Descarga los precios de hoy o la serie histórica completa (CSV).

@@ -59,6 +59,55 @@ export type ResumenIA = {
   fuente: "llm" | "fallback";
 };
 
+/**
+ * Verificación cruzada (§4): los precios GMML de HOY contrastados contra
+ * SISAP–MIDAGRI, una publicación independiente del mismo ministerio.
+ * Es una segunda opinión sobre nuestra propia ingesta — no la fuente primaria.
+ */
+export type VerificacionItem = {
+  producto: string;
+  sisap_kg: number | null;
+  gmml_kg: number | null;
+  delta_pct: number | null;
+  /** true si |delta| supera el umbral o falta contraparte en nuestra BD. */
+  flag: boolean;
+  detalle: string;
+};
+
+export type Verificacion = {
+  fuente: string;
+  url: string;
+  fecha: string | null;
+  /** Umbral de discrepancia en % (|delta| mayor se marca). */
+  umbral_pct: number;
+  contrastados: number;
+  coinciden: number;
+  /**
+   * false = la BD no tenía NINGÚN precio GMML de esa fecha (el reporte del día
+   * aún no se ingestaba): contraste prematuro, no divergencia.
+   */
+  gmml_disponible: boolean;
+  resultados: VerificacionItem[];
+  generado_en: string;
+  /** true si el contraste corresponde al último día del snapshot. */
+  vigente: boolean;
+};
+
+/** Mercado adicional al GMML (boletín MMF2, SISAP/aves): solo su último día. */
+export type MercadoExtraProducto = {
+  nombre: string;
+  slug: string;
+  precio_kg: number | null;
+  var_pct: number | null;
+};
+
+export type MercadoExtra = {
+  codigo: string;
+  nombre: string;
+  latestFecha: string;
+  productos: MercadoExtraProducto[];
+};
+
 export type Producto = {
   nombre: string;
   slug: string;
@@ -81,6 +130,8 @@ export type Snapshot = {
   forecastMeta?: { kill_gate: KillGate };
   anomalias?: Anomalia[];
   resumenIA?: ResumenIA;
+  mercados?: MercadoExtra[];
+  verificacion?: Verificacion;
 };
 
 // Local-dev data bridge: read the JSON the Python pipeline exports.
@@ -131,6 +182,25 @@ export function topAnomalias(s: Snapshot, n = 6): Anomalia[] {
 /** Pronóstico de un producto, si existe (server-safe, sin null). */
 export function forecastDe(p: Producto): Forecast | null {
   return p.forecast ?? null;
+}
+
+/** Mercados adicionales al GMML con al menos un precio publicable (puro). */
+export function mercadosExtra(s: Snapshot): MercadoExtra[] {
+  return (s.mercados ?? []).filter((m) =>
+    m.productos.some((p) => p.precio_kg != null),
+  );
+}
+
+/**
+ * Resultados del contraste SISAP ordenados para mostrar: primero los que SÍ
+ * tienen ambos precios (por |delta| descendente — lo más divergente arriba),
+ * después los "sin contraparte". Puro y server/cliente-safe.
+ */
+export function resultadosVerificacion(v: Verificacion): VerificacionItem[] {
+  const conAmbos = v.resultados.filter((r) => r.gmml_kg != null);
+  const sinPar = v.resultados.filter((r) => r.gmml_kg == null);
+  conAmbos.sort((a, b) => Math.abs(b.delta_pct ?? 0) - Math.abs(a.delta_pct ?? 0));
+  return [...conAmbos, ...sinPar];
 }
 
 /**

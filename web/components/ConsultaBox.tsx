@@ -9,12 +9,14 @@ type Fila = {
   slug: string;
   precio_kg: number | null;
   var_pct: number | null;
+  /** Presente solo en productos de otros mercados (sin página /p/[slug]). */
+  mercado?: string;
 };
 
 type Respuesta = {
   texto: string;
   productos: Fila[];
-  fuente?: "claude" | "fallback";
+  fuente?: "llm" | "fallback";
 };
 
 const EJEMPLOS = ["¿Qué está más barato hoy?", "¿Qué subió de precio?", "maracuyá"];
@@ -107,13 +109,15 @@ export default function ConsultaBox() {
 
           {resp.productos.length > 0 && (
             <ul className="mt-3 space-y-1">
-              {resp.productos.map((p) => (
-                <li key={p.slug}>
-                  <Link
-                    href={`/p/${p.slug}`}
-                    className="flex items-center justify-between gap-2 rounded-sm px-2 py-1.5 hover:bg-ink/[0.04]"
-                  >
-                    <span className="truncate text-sm">{p.nombre}</span>
+              {resp.productos.map((p) => {
+                const contenido = (
+                  <>
+                    <span className="truncate text-sm">
+                      {p.nombre}
+                      {p.mercado && (
+                        <span className="ml-1.5 text-xs text-faint">· {p.mercado}</span>
+                      )}
+                    </span>
                     <span className="flex items-center gap-2 shrink-0">
                       <span className="text-sm tabular-nums text-muted">{soles(p.precio_kg)}</span>
                       <span
@@ -122,15 +126,32 @@ export default function ConsultaBox() {
                         {pct(p.var_pct)}
                       </span>
                     </span>
-                  </Link>
-                </li>
-              ))}
+                  </>
+                );
+                // Los productos de otros mercados no tienen página propia todavía.
+                return (
+                  <li key={p.slug}>
+                    {p.mercado ? (
+                      <div className="flex items-center justify-between gap-2 rounded-sm px-2 py-1.5">
+                        {contenido}
+                      </div>
+                    ) : (
+                      <Link
+                        href={`/p/${p.slug}`}
+                        className="flex items-center justify-between gap-2 rounded-sm px-2 py-1.5 hover:bg-ink/[0.04]"
+                      >
+                        {contenido}
+                      </Link>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           )}
 
           <p className="mt-3 text-[11px] text-faint">
-            {resp.fuente === "claude"
-              ? "Interpretado con IA (Claude) sobre el snapshot. Precios reales del mercado."
+            {resp.fuente === "llm"
+              ? "Interpretado con IA sobre el snapshot. Precios reales del mercado."
               : "Respuesta por coincidencia de palabras clave sobre el snapshot."}{" "}
             Referencial, no asesoría de compra.
           </p>

@@ -112,10 +112,12 @@ def build(db_path: str = DB) -> dict:
     _add_forecast(snapshot, productos, db_path)
     # --- Fase 4: capa IA (anomalías estadísticas + resumen del día) -----------
     _add_ia(snapshot, productos, db_path)
-    # --- Multi-mercado (boletín MMF2/frutas): retro-compatible, opcional -------
+    # --- Multi-mercado (boletín MMF2/frutas, SISAP/aves): retro-compatible -----
     _add_mercados(snapshot, c, gmml_id)
     # --- Fase 4: alertas accionables (detección honesta; no envía nada) -------
     _add_alertas(snapshot)
+    # --- Fase 2 §4: verificación cruzada SISAP-MIDAGRI (aditiva, opcional) ----
+    _add_verificacion(snapshot, db_path)
 
     c.close()
     return snapshot
@@ -182,7 +184,7 @@ def _add_ia(snapshot: dict, productos: list[dict], db_path: str) -> None:
     falla, el snapshot base se conserva con anomalias=[] y un resumen vacío.
     """
     try:
-        from .ai import detecta_anomalias, daily_summary
+        from .ai import daily_summary, detecta_anomalias
         snapshot["anomalias"] = detecta_anomalias(snapshot)
         facts = _build_facts(snapshot, productos)
         snapshot["resumenIA"] = daily_summary(facts)
@@ -259,6 +261,26 @@ def _add_alertas(snapshot: dict) -> None:
     except Exception as e:  # noqa: BLE001 - el snapshot base no debe caerse
         snapshot.setdefault("alertas", [])
         snapshot["alertasError"] = f"{type(e).__name__}: {e}"
+
+
+def _add_verificacion(snapshot: dict, db_path: str) -> None:
+    """Adjunta snapshot.verificacion: el cross-check GMML vs SISAP-MIDAGRI (§4).
+
+    Lee el cache sisap_check.json que escribe `ingest --sisap` (sin red ni
+    re-parseo). ADITIVO: si no hay cache, el bloque simplemente no aparece y el
+    dashboard lo ignora. `vigente` marca si el contraste corresponde al último
+    día del snapshot (un check viejo se muestra como histórico, no como de hoy).
+    """
+    try:
+        from .sisap import load_check
+        check = load_check(db_path)
+        if not check:
+            return
+        check["vigente"] = (check.get("fecha") is not None
+                            and check.get("fecha") == snapshot.get("latestFecha"))
+        snapshot["verificacion"] = check
+    except Exception as e:  # noqa: BLE001 - el snapshot base no debe caerse
+        snapshot["verificacionError"] = f"{type(e).__name__}: {e}"
 
 
 def main():

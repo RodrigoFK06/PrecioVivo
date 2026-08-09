@@ -107,3 +107,108 @@ def test_cross_check_missing_db_flags_all(rows):
     gmml = [r for r in rows if r["mercado"] == sisap.GMML_LABEL]
     assert len(cc) == len(gmml)
     assert all(c["flag"] and c["gmml_kg"] is None for c in cc)
+
+
+# --- persistencia del cross-check (offline, filas sintéticas) --------------
+_CC_SINTETICO = [
+    {"producto": "PAPA BLANCA", "fecha": date(2026, 7, 6), "sisap_kg": 1.50,
+     "gmml_kg": 1.48, "delta_pct": 1.35, "flag": False, "detalle": "coincide (+1.4%)"},
+    {"producto": "CEBOLLA ROJA", "fecha": date(2026, 7, 6), "sisap_kg": 2.10,
+     "gmml_kg": 1.60, "delta_pct": 31.25, "flag": True, "detalle": "delta +31.3% > 15%"},
+    {"producto": "AJO CRIOLLO", "fecha": date(2026, 7, 6), "sisap_kg": 8.00,
+     "gmml_kg": None, "delta_pct": None, "flag": True,
+     "detalle": "sin contraparte GMML para esa fecha en la BD"},
+]
+
+
+def test_build_check_summary():
+    check = sisap.build_check(_CC_SINTETICO)
+    assert check["fecha"] == "2026-07-06"
+    assert check["contrastados"] == 3
+    assert check["coinciden"] == 1
+    assert check["umbral_pct"] == 15
+    assert check["gmml_disponible"] is True
+    assert len(check["resultados"]) == 3
+    assert check["resultados"][1]["flag"] is True
+
+
+def test_build_check_empty():
+    check = sisap.build_check([])
+    assert check["fecha"] is None
+    assert check["contrastados"] == 0 and check["coinciden"] == 0
+    assert check["gmml_disponible"] is False
+
+
+def test_build_check_premature():
+    # Sin NINGÚN gmml_kg (el 335 del día aún no se ingesta): contraste prematuro.
+    prematuro = [dict(r, gmml_kg=None, delta_pct=None, flag=True,
+                      detalle="sin contraparte GMML para esa fecha en la BD")
+                 for r in _CC_SINTETICO]
+    check = sisap.build_check(prematuro)
+    assert check["gmml_disponible"] is False
+    assert check["coinciden"] == 0
+
+
+def test_cross_check_matches_against_sqlite(tmp_path):
+    # Camino feliz offline: una BD mínima con el precio GMML del mismo día.
+    import sqlite3
+    db = str(tmp_path / "preciovivo.db")
+    con = sqlite3.connect(db)
+    con.executescript("""
+        CREATE TABLE productos (id INTEGER PRIMARY KEY, nombre_canonico TEXT);
+        CREATE TABLE precios_diarios (fecha TEXT, producto_id INTEGER, precio_hoy_kg REAL);
+        INSERT INTO productos VALUES (1, 'Papa Blanca');
+        INSERT INTO precios_diarios VALUES ('2026-07-06', 1, 1.48);
+    """)
+    con.commit()
+    con.close()
+
+    filas = [{"mercado": sisap.GMML_LABEL, "producto": "PAPA BLANCA",
+              "precio_hoy_kg": 1.50, "precio_ayer_kg": 1.45, "prom_mes": None,
+              "prom_7d": None, "fecha": date(2026, 7, 6)}]
+    cc = sisap.cross_check(filas, db_path=db)
+    assert len(cc) == 1
+    c = cc[0]
+    assert c["gmml_kg"] == 1.48 and c["flag"] is False
+    assert abs(c["delta_pct"] - 1.35) < 0.01
+
+
+def test_save_and_load_check_roundtrip(tmp_path):
+    db = str(tmp_path / "preciovivo.db")  # el cache vive junto a la BD
+    saved = sisap.save_check(_CC_SINTETICO, db_path=db)
+    loaded = sisap.load_check(db_path=db)
+    assert loaded == saved
+    assert loaded["fecha"] == "2026-07-06"
+
+
+def test_load_check_missing_and_corrupt(tmp_path):
+    db = str(tmp_path / "preciovivo.db")
+    assert sisap.load_check(db_path=db) is None
+    (tmp_path / "sisap_check.json").write_text("{no es json", encoding="utf-8")
+    assert sisap.load_check(db_path=db) is None
+
+
+# --- mapeo AVES -> ProductRow (offline, filas sintéticas) -------------------
+def test_sisap_aves_rows_mapping():
+    from preciovivo.ingest import _sisap_aves_rows
+
+    rows = [
+        {"mercado": sisap.AVES_LABEL, "producto": "POLLO VIVO",
+         "precio_hoy_kg": 5.30, "precio_ayer_kg": 5.10, "prom_mes": 5.2,
+         "prom_7d": 5.25, "fecha": date(2026, 7, 6)},
+        {"mercado": sisap.GMML_LABEL, "producto": "PAPA BLANCA",
+         "precio_hoy_kg": 1.50, "precio_ayer_kg": 1.48, "prom_mes": 1.5,
+         "prom_7d": 1.5, "fecha": date(2026, 7, 6)},
+        {"mercado": sisap.AVES_LABEL, "producto": "GALLINA",
+         "precio_hoy_kg": None, "precio_ayer_kg": 6.0, "prom_mes": None,
+         "prom_7d": None, "fecha": date(2026, 7, 6)},
+    ]
+    fecha, prs = _sisap_aves_rows(rows)
+    # Solo AVES con precio_hoy: GMML se excluye (va por reporte-335) y la fila
+    # sin precio no se upserta.
+    assert fecha == date(2026, 7, 6)
+    assert [p.producto for p in prs] == ["Pollo Vivo"]
+    p = prs[0]
+    # Precio ya en S/ por kg: equiv_kg=1.0 => precio_hoy_kg == precio_hoy_unit.
+    assert p.equiv_kg == 1.0
+    assert p.precio_hoy_kg == 5.30 and p.precio_ayer_kg == 5.10

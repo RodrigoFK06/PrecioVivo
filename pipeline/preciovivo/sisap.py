@@ -20,15 +20,20 @@ Public API:
   fetch_sisap()                 -> (local_path, sha256, nbytes)
   parse_sisap(pdf_path)         -> list[dict]   (one dict per producto row)
   cross_check(sisap_rows, db)   -> list[dict]   (GMML deltas vs ../data/preciovivo.db)
+  build_check(cc)               -> dict          (resumen serializable del cross-check)
+  save_check(cc, db) / load_check(db)            (cache JSON junto a la BD, como
+                                                  forecast_cache.json; export lo adjunta
+                                                  al snapshot sin tocar la red)
 """
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import sqlite3
 import unicodedata
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pdfplumber
 import requests
@@ -53,6 +58,9 @@ MERCADOS = (
 )
 # Only this mercado overlaps our GMML feed; cross_check restricts to it.
 GMML_LABEL = "GRAN MERCADO MAYORISTA DE LIMA"
+# El mercado de aves (POLLO VIVO) NO existe en el reporte-335: es el único de
+# SISAP que se ingesta como serie propia (codigo 'AVES' en store.MERCADOS_CONOCIDOS).
+AVES_LABEL = "MERCADO MAYORISTA DE AVES VIVAS"
 
 # x-center bands for the 5 numeric columns (centers ~330/370/430/480/540; the
 # bands are generous to absorb minor edition drift, like parser.py's MASA_BANDS).
@@ -275,6 +283,69 @@ def cross_check(sisap_rows: list[dict], db_path: str | None = None) -> list[dict
             "delta_pct": round(delta * 100, 2), "flag": flag, "detalle": detalle,
         })
     return out
+
+
+# --- persistencia del cross-check (cache junto a la BD) -------------------
+def _check_path(db_path: str) -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(db_path)), "sisap_check.json")
+
+
+def build_check(cc: list[dict]) -> dict:
+    """Resumen serializable del cross-check, listo para el snapshot del dashboard.
+
+    Contrato: {fuente, url, fecha, umbral_pct, contrastados, coinciden, resultados[]}.
+    `coinciden` cuenta los NO flageados; cada resultado conserva el detalle honesto
+    (incluidos los "sin contraparte GMML"). Las fechas se serializan ISO.
+    """
+    fecha = next((r["fecha"] for r in cc if r.get("fecha")), None)
+    resultados = [{
+        "producto": r["producto"],
+        "sisap_kg": r["sisap_kg"],
+        "gmml_kg": r["gmml_kg"],
+        "delta_pct": r["delta_pct"],
+        "flag": bool(r["flag"]),
+        "detalle": r["detalle"],
+    } for r in cc]
+    return {
+        "fuente": "SISAP – MIDAGRI",
+        "url": SISAP_URL,
+        "fecha": fecha.isoformat() if hasattr(fecha, "isoformat") else fecha,
+        "umbral_pct": round(DELTA_FLAG * 100),
+        "contrastados": len(resultados),
+        "coinciden": sum(1 for r in resultados if not r["flag"]),
+        # False = la BD no tiene NINGÚN precio GMML de esa fecha: el reporte-335
+        # del día aún no se ingesta (SISAP sale ~06:30, el 335 después). Eso es
+        # "contraste prematuro", no divergencia — el dashboard lo distingue.
+        "gmml_disponible": any(r["gmml_kg"] is not None for r in resultados),
+        "resultados": resultados,
+        "generado_en": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
+def save_check(cc: list[dict], db_path: str | None = None) -> dict:
+    """Persiste build_check(cc) junto a la BD (para que export lo adjunte al
+    snapshot sin red ni re-parseo). Devuelve el dict guardado. Best-effort:
+    un fallo de disco no debe tumbar la ingesta."""
+    db_path = db_path or DEFAULT_DB
+    check = build_check(cc)
+    try:
+        with open(_check_path(db_path), "w", encoding="utf-8") as f:
+            json.dump(check, f, ensure_ascii=False)
+    except OSError:
+        pass
+    return check
+
+
+def load_check(db_path: str | None = None) -> dict | None:
+    """Lee el cache del cross-check si existe; None si no hay o está corrupto."""
+    p = _check_path(db_path or DEFAULT_DB)
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 # --- CLI -----------------------------------------------------------------
