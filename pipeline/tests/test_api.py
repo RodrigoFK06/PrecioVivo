@@ -171,11 +171,21 @@ def test_meta_mercados_resumen_verificacion(cliente):
 
 
 def test_consulta_sin_indice_da_503(cliente):
-    """Índice RAG ausente es un problema de despliegue, no del cliente."""
+    """Índice RAG ausente es un problema de despliegue, no del cliente.
+
+    El fixture aísla `indexer.DESTINO_WEB` a un directorio vacío, así que el 503
+    es DETERMINISTA. Antes el test leía `../web/data` —el índice real del repo— y
+    su resultado dependía de qué artefacto estuviera commiteado: pasaba con el
+    directorio vacío y fallaba con un índice de firma incompatible, que es un
+    fallo del repositorio disfrazado de fallo del test.
+    """
     r = cliente.post("/consulta?pregunta=hola", headers=AUTH)
-    assert r.status_code in (503, 200)
-    if r.status_code == 503:
-        assert "index" in r.json()["detail"].lower()
+    assert r.status_code == 503
+    detalle = r.json()["detail"].lower()
+    # Dos caminos llegan a 503 y hay que reconocer ambos: no hay índice publicado
+    # ("index", del comando que lo construye) o el índice existe con otra firma
+    # de embebedor ("índice", con acento, en el mensaje de incompatibilidad).
+    assert "index" in detalle or "índice" in detalle, detalle
 
 
 # --------------------------------------------------------------------------- #

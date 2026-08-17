@@ -35,10 +35,11 @@ export default function VerificacionPanel({ verificacion }: Props) {
 
       {!v.gmml_disponible ? (
         <p className="mt-4 rounded-md border border-rule bg-card p-4 text-sm leading-relaxed text-muted">
-          SISAP ya publicó su reporte{v.fecha && <> del {fechaLarga(v.fecha)}</>}, pero
-          el reporte GMML de esa fecha aún no estaba en nuestra base al momento del
-          contraste — SISAP sale más temprano. {v.contrastados} producto(s) quedan en
-          espera; el contraste se completa en la siguiente actualización.
+          SISAP ya publicó su reporte
+          {(v.fecha_sisap ?? v.fecha) && <> del {fechaLarga((v.fecha_sisap ?? v.fecha)!)}</>},
+          pero no había ningún día GMML en nuestra base con el cual contrastarlo.{" "}
+          {v.contrastados} producto(s) quedan en espera; el contraste se completa en la
+          siguiente actualización.
         </p>
       ) : (
         <ResultadosTabla v={v} filas={filas} divergentes={divergentes} sinPar={sinPar} />
@@ -103,6 +104,12 @@ function ResultadosTabla({
         {sinPar > 0 && <> · {sinPar} sin contraparte en nuestra base ese día</>}. SISAP
         es una segunda opinión, no nuestra fuente primaria: ambas series salen de
         MIDAGRI, pero por canales distintos — si divergen, algo merece revisión.
+        {v.base && (
+          <>
+            {" "}
+            <span className="text-muted">{v.base}</span>
+          </>
+        )}
       </p>
     </div>
   );

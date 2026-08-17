@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { promises as fs } from "fs";
-import path from "path";
 import OpenAI from "openai";
-import { buscarProductos, type Producto, type Snapshot } from "@/lib/data";
+import { buscarProductos, getSnapshot, type Producto, type Snapshot } from "@/lib/data";
+import { recuperarViaApi } from "@/lib/api";
 import { aPrompt, recuperar } from "@/lib/rag";
 
 // Proveedor LLM agnóstico (OpenAI-compatible). Por defecto DeepSeek (barato).
@@ -27,9 +26,39 @@ type Fila = {
 type Respuesta = {
   texto: string;
   productos: Fila[];
-  /** 'llm-rag' = el modelo respondió sobre contexto RECUPERADO (serie, anomalías,
-   *  ficha). 'llm' = sobre el catálogo del día, sin profundidad temporal. */
-  fuente?: "llm" | "llm-rag" | "fallback";
+  /**
+   * Con qué evidencia respondió el modelo. Los cuatro valores son distintos y
+   * NO son intercambiables:
+   *
+   *   'llm-rag'         híbrido completo: BM25 + vectores + piso determinista.
+   *   'llm-rag-lexico'  BM25 + piso, SIN vectores. Pasa cuando el proveedor de
+   *                     embeddings falla o agota su cuota. Sigue siendo
+   *                     recuperación real sobre el histórico: BM25 corre sobre
+   *                     el texto que viaja en el deploy y no depende de nadie.
+   *   'llm'             el catálogo del día, una línea por producto, sin
+   *                     profundidad temporal.
+   *   'fallback'        palabras clave, sin modelo.
+   *
+   * El peldaño intermedio existe porque antes ese caso se reportaba como
+   * 'llm-rag': la búsqueda no corría y la respuesta salía igual, diciendo que
+   * sí. Una degradación que no se declara es indistinguible de que todo
+   * funcione.
+   */
+  fuente?: "llm" | "llm-rag" | "llm-rag-lexico" | "fallback";
+  /**
+   * QUÉ implementación recuperó el contexto, aparte de con cuánta evidencia.
+   *
+   *   'api'    el pipeline vía `POST /recuperar` — la MISMA implementación que
+   *            usan las evaluaciones, la CLI y el MCP.
+   *   'local'  el port de TypeScript de `web/lib/rag.ts`.
+   *
+   * Va en un campo aparte de `fuente` a propósito: son dos ejes distintos
+   * (cuánta evidencia vs. quién la recuperó) y mezclarlos haría que el enum
+   * creciera multiplicándose sin decir más.
+   */
+  motor?: "api" | "local";
+  /** Por qué se degradó, si se degradó. Para poder depurar una respuesta pobre. */
+  degradado?: string;
 };
 
 const fila = (p: Producto): Fila => ({
@@ -56,13 +85,12 @@ function extrasDe(snap: Snapshot): (Fila & { mercado: string })[] {
   );
 }
 
-// Carga el snapshot directamente (server-side). No depende de getSnapshot para
-// evitar cualquier acoplamiento; es la misma fuente (data/snapshot.json).
-async function cargarSnapshot(): Promise<Snapshot> {
-  const p = path.join(process.cwd(), "data", "snapshot.json");
-  const raw = await fs.readFile(p, "utf-8");
-  return JSON.parse(raw) as Snapshot;
-}
+// Se usa `getSnapshot` de lib/data en vez de releer el archivo por nuestra
+// cuenta. La copia anterior existía "para evitar acoplamiento", pero el efecto
+// real era parsear 3,4 MB de JSON en CADA request de una ruta force-dynamic —y
+// mantener dos lectores del mismo archivo que podían divergir. Es la misma
+// fuente; compartir el lector memoizado es estrictamente mejor.
+const cargarSnapshot = getSnapshot;
 
 const soles = (n: number | null) => (n == null ? "—" : `S/ ${n.toFixed(2)}`);
 const pct = (n: number | null) => (n == null ? "—" : `${n > 0 ? "+" : ""}${n.toFixed(1)}%`);
@@ -348,13 +376,35 @@ async function conLLM(q: string, snap: Snapshot): Promise<Respuesta> {
 // semana?" — la evidencia temporal no está en el prompt. Aquí el modelo recibe
 // las ventanas semanales, las anomalías detectadas y la ficha del producto.
 // ---------------------------------------------------------------------------
-async function conRAG(q: string, snap: Snapshot): Promise<Respuesta | null> {
+/**
+ * Contexto para el prompt: del pipeline si su API está configurada, del port de
+ * TypeScript si no.
+ *
+ * El orden no es casual. La API es la implementación de REFERENCIA —la que usan
+ * las evaluaciones, la CLI y el MCP— e incluye lo que el port no cubre. El
+ * respaldo local existe para que el sitio siga siendo estático + snapshot: si la
+ * API no está o no responde, se contesta igual.
+ */
+async function contextoDe(
+  q: string,
+  snap: Snapshot,
+): Promise<{ contexto: string; motor: "api" | "local"; degradado?: string } | null> {
+  const remoto = await recuperarViaApi(q);
+  if (remoto) return { contexto: remoto.prompt, motor: "api" };
+
   const catalogo = Object.fromEntries(snap.productos.map((p) => [p.slug, p.nombre]));
   const ctx = await recuperar(q, catalogo, snap.latestFecha ?? null);
   // Sin contexto recuperado no hay nada que RAG aporte sobre el camino normal.
   if (ctx.degradado && !ctx.piso.length) return null;
   const contexto = aPrompt(ctx);
   if (!contexto) return null;
+  return { contexto, motor: "local", degradado: ctx.degradado };
+}
+
+async function conRAG(q: string, snap: Snapshot): Promise<Respuesta | null> {
+  const recuperado = await contextoDe(q, snap);
+  if (!recuperado) return null;
+  const { contexto, motor, degradado } = recuperado;
 
   const client = new OpenAI({ apiKey: AI_API_KEY, baseURL: AI_BASE_URL });
   const tool = {
@@ -417,7 +467,13 @@ async function conRAG(q: string, snap: Snapshot): Promise<Respuesta | null> {
     const p = porSlug.get(s);
     if (p) productos.push(fila(p));
   }
-  return { texto, productos, fuente: "llm-rag" };
+  // Si el respaldo local degradó, la parte VECTORIAL no corrió; BM25 y el piso
+  // sí. Decirlo es la diferencia entre una degradación declarada y una mentira.
+  // Por la API no hay peldaño intermedio: o devuelve contexto completo, o
+  // devuelve null y ya estaríamos en el respaldo.
+  return degradado
+    ? { texto, productos, fuente: "llm-rag-lexico", motor, degradado }
+    : { texto, productos, fuente: "llm-rag", motor };
 }
 
 // ---------------------------------------------------------------------------

@@ -1,64 +1,40 @@
-"use client";
-
-import { useCallback } from "react";
-import { productosToCSV, type Producto } from "@/lib/data";
-
 type Props = {
-  productos: Producto[];
+  /** Cuántos productos hay. Solo decide si los enlaces se ofrecen o no. */
+  nProductos: number;
 };
 
 /**
- * Botón(es) de descarga de CSV 100% en el cliente.
+ * Enlaces de descarga de CSV.
  *
- * `productosToCSV` es una función pura (sin `fs`), así que generamos el texto
- * en el navegador, lo envolvemos en un Blob y disparamos la descarga con un
- * enlace temporal (`URL.createObjectURL`). Sin backend.
+ * Antes esto era un componente de cliente que recibía el array de productos
+ * COMPLETO y armaba el CSV en el navegador con `URL.createObjectURL`. Elegante,
+ * pero el precio estaba escondido: para tener los datos disponibles "por si
+ * acaso", Next serializaba las series enteras —524 puntos × 72 productos— dentro
+ * del HTML de la portada. **3,43 MB de los 4,8 MB de la página**, en cada
+ * visita, para un botón que casi nadie pulsa.
+ *
+ * Ahora son dos enlaces a `/csv/[modo]`, que se prerenderiza en el build y sirve
+ * el CDN. Los datos viajan cuando alguien los pide, y ya en formato CSV.
+ *
+ * Deja de ser componente de cliente: sin `useCallback`, sin `Blob`, sin
+ * JavaScript. Un enlace hace esto mejor que nosotros.
  */
-export default function ExportCSV({ productos }: Props) {
-  const descargar = useCallback(
-    (modo: "latest" | "series") => {
-      if (!productos.length) return;
+export default function ExportCSV({ nProductos }: Props) {
+  if (nProductos === 0) return null;
 
-      // BOM UTF-8 para que Excel respete los acentos de los nombres.
-      const csv = "﻿" + productosToCSV(productos, modo);
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-
-      const fecha = new Date().toISOString().slice(0, 10);
-      const sufijo = modo === "latest" ? "precios-hoy" : "serie-completa";
-
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `precio-vivo-${sufijo}-${fecha}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    },
-    [productos],
-  );
-
-  const sinDatos = productos.length === 0;
+  const clase =
+    "rounded-sm border border-rule bg-card px-3 py-1.5 text-xs font-medium " +
+    "text-ink hover:border-ink transition-colors";
 
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span className="text-xs text-muted">Descargar datos:</span>
-      <button
-        type="button"
-        onClick={() => descargar("latest")}
-        disabled={sinDatos}
-        className="rounded-sm border border-rule bg-card px-3 py-1.5 text-xs font-medium text-ink hover:border-ink disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-      >
+      <a className={clase} href="/csv/latest" download>
         CSV · precios de hoy
-      </button>
-      <button
-        type="button"
-        onClick={() => descargar("series")}
-        disabled={sinDatos}
-        className="rounded-sm border border-rule bg-card px-3 py-1.5 text-xs font-medium text-ink hover:border-ink disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-      >
+      </a>
+      <a className={clase} href="/csv/series" download>
         CSV · serie completa
-      </button>
+      </a>
     </div>
   );
 }

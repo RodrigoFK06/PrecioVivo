@@ -31,7 +31,6 @@ import hashlib
 import json
 import os
 import re
-import sqlite3
 import unicodedata
 from datetime import date, datetime, timezone
 
@@ -226,49 +225,165 @@ def parse_sisap(pdf_path: str) -> list[dict]:
 
 
 # --- cross-check ---------------------------------------------------------
-def _gmml_prices(db_path: str, fecha) -> dict[str, float]:
-    """{normalized producto -> precio_hoy_kg} for GMML on `fecha`, from SQLite."""
-    fecha_s = fecha.isoformat() if hasattr(fecha, "isoformat") else str(fecha)
-    if not os.path.exists(db_path):
-        return {}
-    con = sqlite3.connect(db_path)
+def _fecha_iso(fecha) -> str:
+    return fecha.isoformat() if hasattr(fecha, "isoformat") else str(fecha)
+
+
+def _gmml_prices(con, fecha) -> dict[str, float]:
+    """{producto normalizado -> precio_hoy_kg} del mercado GMML en `fecha`.
+
+    FILTRA POR MERCADO. Sin el filtro, la consulta barría `precios_diarios`
+    entero y traía también las filas de AVES y MMF2, que viven en la misma
+    tabla: un producto con el mismo nombre en dos mercados se contrastaría
+    contra el precio del mercado equivocado. Hoy no colisiona ningún nombre,
+    pero eso es suerte, no una garantía.
+    """
     try:
-        rows = con.execute(
-            "SELECT p.nombre_canonico, pr.precio_hoy_kg "
-            "FROM precios_diarios pr JOIN productos p ON p.id = pr.producto_id "
-            "WHERE pr.fecha = ? AND pr.precio_hoy_kg IS NOT NULL",
-            (fecha_s,),
-        ).fetchall()
-    finally:
-        con.close()
-    return {_norm(n): v for n, v in rows}
+        rows = con.filas(
+            "SELECT p.nombre_canonico AS nombre, pr.precio_hoy_kg AS precio "
+            "FROM precios_diarios pr "
+            "JOIN productos p ON p.id = pr.producto_id "
+            "JOIN mercados m ON m.id = pr.mercado_id "
+            f"WHERE pr.fecha = {con.ph} AND pr.precio_hoy_kg IS NOT NULL "
+            "AND m.codigo = 'GMML'",
+            (_fecha_iso(fecha),),
+        )
+    except Exception:  # noqa: BLE001 - cada driver tiene su jerarquía de errores
+        # BD a medio inicializar: es un contraste imposible, no un fallo del
+        # cross-check. Degradar a "sin contraparte" mantiene la ingesta GMML en
+        # pie, que es la regla de este módulo (no bloquear nunca el pipeline).
+        con.rollback()
+        return {}
+    return {_norm(r["nombre"]): r["precio"] for r in rows}
+
+
+def _ultima_fecha_gmml(con, antes_de) -> str | None:
+    """Última fecha con datos GMML estrictamente anterior a `antes_de`."""
+    try:
+        valor = con.valor(
+            "SELECT MAX(pr.fecha) AS f FROM precios_diarios pr "
+            "JOIN mercados m ON m.id = pr.mercado_id "
+            f"WHERE m.codigo = 'GMML' AND pr.fecha < {con.ph}",
+            (_fecha_iso(antes_de),),
+        )
+    except Exception:  # noqa: BLE001
+        con.rollback()
+        return None
+    return valor or None
+
+
+def _resolver_objetivo(con, fecha_sisap) -> dict:
+    """Decide CONTRA QUÉ DÍA y con QUÉ COLUMNA de SISAP se contrasta.
+
+    POR QUÉ HACE FALTA ESTO
+    -----------------------
+    Contrastar siempre la columna "Precio Hoy" de SISAP contra nuestra BD en la
+    fecha del propio SISAP hacía que el cross-check NUNCA estuviera vigente.
+    SISAP publica ~06:30 y también publica sábados; el reporte-335 del GMML sale
+    después y no existe los fines de semana. Resultado observado: SISAP fechado
+    el sábado 2026-08-15 contra una BD cuyo último día GMML era el viernes
+    2026-08-14 -> cero contrapartes, 0/12 "coinciden", `vigente=false`. La
+    redundancia del §4 estaba escrita pero no se ejercía nunca.
+
+    SISAP trae además la columna "Precio Ayer", que describe el MISMO día que
+    nuestro último 335. Contrastar esa columna contra ese día compara dos
+    fuentes hablando de la misma jornada, que es justo lo que la redundancia
+    quiere verificar. No es un parche: es la comparación semánticamente correcta.
+
+    Nunca se compara "Precio Hoy" de SISAP contra un día distinto en nuestra BD:
+    eso inventaría divergencias que solo reflejan el paso del tiempo.
+    """
+    precios = _gmml_prices(con, fecha_sisap)
+    if precios:
+        return {
+            "fecha_gmml": _fecha_iso(fecha_sisap),
+            "columna_sisap": "precio_hoy_kg",
+            "precios": precios,
+            "base": ("mismo día: 'Precio Hoy' de SISAP contra el reporte-335 de "
+                     "esa fecha"),
+        }
+
+    previa = _ultima_fecha_gmml(con, fecha_sisap)
+    if previa:
+        return {
+            "fecha_gmml": previa,
+            "columna_sisap": "precio_ayer_kg",
+            "precios": _gmml_prices(con, previa),
+            "base": (f"'Precio Ayer' de SISAP ({_fecha_iso(fecha_sisap)}) contra el "
+                     f"reporte-335 del {previa}: ambas fuentes describen ese día"),
+        }
+
+    return {
+        "fecha_gmml": _fecha_iso(fecha_sisap),
+        "columna_sisap": "precio_hoy_kg",
+        "precios": {},
+        "base": "sin ningún día GMML en la BD con el cual contrastar",
+    }
 
 
 def cross_check(sisap_rows: list[dict], db_path: str | None = None) -> list[dict]:
-    """Compare SISAP GMML prices against our own GMML feed for the SAME day.
+    """Contrasta los precios GMML de SISAP contra nuestro propio feed GMML.
 
-    Returns one dict per GMML producto present in SISAP:
-      {producto, fecha, sisap_kg, gmml_kg, delta_pct, flag, detalle}
-    `flag` is True when |delta| > DELTA_FLAG (15%) or the producto is missing in
-    our DB for that date -- the redundancy condition we want surfaced (§4).
+    El día y la columna se resuelven UNA vez con `_resolver_objetivo` (ver ahí
+    por qué no siempre es la fecha de SISAP). Devuelve un dict por producto GMML
+    presente en SISAP:
+      {producto, fecha, fecha_sisap, columna_sisap, sisap_kg, gmml_kg,
+       delta_pct, flag, detalle}
+
+    `fecha` es el día GMML CONTRASTADO —no el de SISAP—, porque es el día del que
+    la comparación habla; de ahí sale `vigente` en el snapshot.
+
+    `flag` es True cuando |delta| > DELTA_FLAG o el producto no está en nuestra
+    BD para ese día: la condición de redundancia que el §4 quiere visible.
     """
     db_path = db_path or DEFAULT_DB
-    out: list[dict] = []
-    for row in sisap_rows:
-        if _norm(row["mercado"]) != _norm(GMML_LABEL):
-            continue
-        gmml = _gmml_prices(db_path, row["fecha"])
-        sisap_kg = row["precio_hoy_kg"]
-        gmml_kg = gmml.get(_norm(row["producto"]))
+    filas = [r for r in sisap_rows if _norm(r["mercado"]) == _norm(GMML_LABEL)]
+    if not filas:
+        return []
+    fecha_sisap = next((r["fecha"] for r in filas if r.get("fecha")), None)
+    if fecha_sisap is None:
+        return []
 
+    from .store import LectorDatos, hay_datos
+
+    if hay_datos(db_path):
+        # Una sola conexión para todo el contraste. Antes se abría una por fila y
+        # se repetía la MISMA consulta invariante dentro del bucle.
+        with LectorDatos(db_path) as con:
+            objetivo = _resolver_objetivo(con, fecha_sisap)
+    else:
+        # Sin BD no se contrasta, pero SÍ se reporta fila por fila: cada producto
+        # queda como "sin contraparte" y `build_check` lo resume como contraste
+        # prematuro. Devolver una lista vacía escondería que SISAP sí trajo datos.
+        # `sqlite3.connect` crearía el archivo vacío, así que ni se intenta abrir.
+        objetivo = {
+            "fecha_gmml": _fecha_iso(fecha_sisap),
+            "columna_sisap": "precio_hoy_kg",
+            "precios": {},
+            "base": "no hay base de datos local con la cual contrastar",
+        }
+
+    gmml = objetivo["precios"]
+    columna = objetivo["columna_sisap"]
+    comun = {
+        "fecha": objetivo["fecha_gmml"],
+        "fecha_sisap": _fecha_iso(fecha_sisap),
+        "columna_sisap": columna,
+    }
+
+    out: list[dict] = []
+    for row in filas:
+        sisap_kg = row.get(columna)
         if sisap_kg is None:
             continue
+        gmml_kg = gmml.get(_norm(row["producto"]))
+
         if gmml_kg is None:
             out.append({
-                "producto": row["producto"], "fecha": row["fecha"],
+                **comun, "producto": row["producto"],
                 "sisap_kg": sisap_kg, "gmml_kg": None, "delta_pct": None,
                 "flag": True,
-                "detalle": "sin contraparte GMML para esa fecha en la BD",
+                "detalle": f"sin contraparte GMML del {objetivo['fecha_gmml']} en la BD",
             })
             continue
 
@@ -278,10 +393,11 @@ def cross_check(sisap_rows: list[dict], db_path: str | None = None) -> list[dict
         detalle = (f"delta {delta*100:+.1f}% > {DELTA_FLAG*100:.0f}%"
                    if flag else f"coincide ({delta*100:+.1f}%)")
         out.append({
-            "producto": row["producto"], "fecha": row["fecha"],
+            **comun, "producto": row["producto"],
             "sisap_kg": sisap_kg, "gmml_kg": round(gmml_kg, 4),
             "delta_pct": round(delta * 100, 2), "flag": flag, "detalle": detalle,
         })
+
     return out
 
 
@@ -290,14 +406,34 @@ def _check_path(db_path: str) -> str:
     return os.path.join(os.path.dirname(os.path.abspath(db_path)), "sisap_check.json")
 
 
+_COLUMNA_LABEL = {
+    "precio_hoy_kg": "Precio Hoy",
+    "precio_ayer_kg": "Precio Ayer",
+}
+
+
 def build_check(cc: list[dict]) -> dict:
     """Resumen serializable del cross-check, listo para el snapshot del dashboard.
 
-    Contrato: {fuente, url, fecha, umbral_pct, contrastados, coinciden, resultados[]}.
-    `coinciden` cuenta los NO flageados; cada resultado conserva el detalle honesto
-    (incluidos los "sin contraparte GMML"). Las fechas se serializan ISO.
+    Contrato:
+      {fuente, url, fecha, fecha_sisap, columna_sisap, base, umbral_pct,
+       contrastados, coinciden, gmml_disponible, resultados[], generado_en}
+
+    `fecha` es el día GMML contrastado, que es del que la comparación habla; el
+    dashboard lo usa para decidir `vigente`. `fecha_sisap` y `columna_sisap` se
+    exponen aparte para que se vea exactamente qué se comparó contra qué, sin
+    tener que confiar en la etiqueta.
+
+    `coinciden` cuenta los NO flageados; cada resultado conserva su detalle
+    honesto, incluidos los "sin contraparte GMML".
     """
     fecha = next((r["fecha"] for r in cc if r.get("fecha")), None)
+    # Cae a `fecha` si la fila no trae `fecha_sisap`: `build_check` tiene que
+    # seguir aceptando cross-checks con la forma anterior (p. ej. un
+    # sisap_check.json ya guardado) sin escribir "del None" en la descripción.
+    fecha_sisap = next((r["fecha_sisap"] for r in cc if r.get("fecha_sisap")), fecha)
+    columna = next((r["columna_sisap"] for r in cc if r.get("columna_sisap")),
+                   "precio_hoy_kg")
     resultados = [{
         "producto": r["producto"],
         "sisap_kg": r["sisap_kg"],
@@ -306,15 +442,27 @@ def build_check(cc: list[dict]) -> dict:
         "flag": bool(r["flag"]),
         "detalle": r["detalle"],
     } for r in cc]
+
+    iso = (lambda f: f.isoformat() if hasattr(f, "isoformat") else f)  # noqa: E731
+    if columna == "precio_ayer_kg":
+        base = (f"Columna '{_COLUMNA_LABEL[columna]}' del reporte SISAP del "
+                f"{iso(fecha_sisap)} contra el reporte-335 del {iso(fecha)}: ambas "
+                f"fuentes describen ese mismo día.")
+    else:
+        base = (f"Columna '{_COLUMNA_LABEL[columna]}' del reporte SISAP del "
+                f"{iso(fecha_sisap)} contra el reporte-335 de la misma fecha.")
+
     return {
         "fuente": "SISAP – MIDAGRI",
         "url": SISAP_URL,
-        "fecha": fecha.isoformat() if hasattr(fecha, "isoformat") else fecha,
+        "fecha": iso(fecha),
+        "fecha_sisap": iso(fecha_sisap),
+        "columna_sisap": columna,
+        "base": base,
         "umbral_pct": round(DELTA_FLAG * 100),
         "contrastados": len(resultados),
         "coinciden": sum(1 for r in resultados if not r["flag"]),
-        # False = la BD no tiene NINGÚN precio GMML de esa fecha: el reporte-335
-        # del día aún no se ingesta (SISAP sale ~06:30, el 335 después). Eso es
+        # False = la BD no tenía NINGÚN precio GMML con el cual contrastar. Eso es
         # "contraste prematuro", no divergencia — el dashboard lo distingue.
         "gmml_disponible": any(r["gmml_kg"] is not None for r in resultados),
         "resultados": resultados,

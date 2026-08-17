@@ -32,11 +32,11 @@ La consulta NL usa un proveedor OpenAI-compatible (DeepSeek por defecto): export
 
 La consulta anterior le mandaba al modelo **el catálogo entero**: una línea por producto con el precio de hoy, la variación contra ayer y la tendencia. Con eso se responde "¿qué está más barato?", pero no *"¿por qué subió la papa esta semana?"* — la evidencia temporal sencillamente no estaba en el prompt, y ningún prompt lo arregla.
 
-Con 73 productos, recuperar *el producto* por embeddings sería decorativo: un substring sin acentos ya lo resuelve. **El RAG acá no es para encontrar el producto, es para ensamblar la evidencia temporal.** Eso es lo que define todo el diseño.
+Con 72 productos, recuperar *el producto* por embeddings sería decorativo: un substring sin acentos ya lo resuelve. **El RAG acá no es para encontrar el producto, es para ensamblar la evidencia temporal.** Eso es lo que define todo el diseño.
 
 ### El corpus se genera, no se recolecta
 
-No hay corpus documental que indexar. `categoria` es NULL en los 73 productos, no hay descripciones, y el único texto nativo es el nombre canónico. Además, [PLAN.md §0.5](./PLAN.md) prohíbe almacenar la prosa de la fuente: solo republicamos hechos numéricos.
+No hay corpus documental que indexar. `categoria` es NULL en los 73 del catálogo, no hay descripciones, y el único texto nativo es el nombre canónico. Además, [PLAN.md §0.5](./PLAN.md) prohíbe almacenar la prosa de la fuente: solo republicamos hechos numéricos.
 
 Así que el corpus se **sintetiza desde nuestros propios hechos**. La restricción legal y la de datos empujan en la misma dirección, y el resultado es mejor que raspar texto ajeno: cada chunk dice exactamente lo que el dato respalda, ni más.
 
@@ -44,12 +44,12 @@ Cuatro tipos, sobre `web/data/snapshot.json` (función pura de un artefacto ya v
 
 | Tipo | Grano | Cantidad | Contesta |
 |---|---|---|---|
-| `producto-periodo` | producto × semana ISO | 7 919 | "¿por qué subió esta semana?" |
-| `evento-anomalia` | anomalía z-score destacada | 615 | "¿cuándo hubo saltos raros?" |
-| `mercado-dia` | día | 519 | "¿qué está más barato hoy?" |
+| `producto-periodo` | producto × semana ISO | 7 991 | "¿por qué subió esta semana?" |
+| `evento-anomalia` | anomalía z-score destacada | 619 | "¿cuándo hubo saltos raros?" |
+| `mercado-dia` | día | 524 | "¿qué está más barato hoy?" |
 | `producto-perfil` | producto | 72 | "¿cuánto suele costar en agosto?" |
 
-**9 125 chunks.**
+**9 206 chunks.**
 
 ### Por qué semanal: la medición, no la intuición
 
@@ -71,7 +71,7 @@ Por eso se agregó **span de evidencia**: cuántos días cubre el chunk que se r
 
 ### Búsqueda híbrida
 
-1. **Pre-filtro estructurado.** Se parsea la pregunta por producto y fecha, y se aplica como `WHERE` **antes** del k-NN. Con 73 nombres canónicos el match léxico es *confiable* — ventaja del dominio, no limitación. Dos niveles: ≥2 tokens del nombre identifican una variedad ("ajo morado" vs "ajo criollo"); 1 token agrupa la familia ("papa" son diez variedades). Todo por token completo, nunca subcadena: si no, "papa" matchearía dentro de "papaya".
+1. **Pre-filtro estructurado.** Se parsea la pregunta por producto y fecha, y se aplica como `WHERE` **antes** del k-NN. Con 72 nombres canónicos el match léxico es *confiable* — ventaja del dominio, no limitación. Dos niveles: ≥2 tokens del nombre identifican una variedad ("ajo morado" vs "ajo criollo"); 1 token agrupa la familia ("papa" son diez variedades). Todo por token completo, nunca subcadena: si no, "papa" matchearía dentro de "papaya".
 2. **BM25** sobre el texto de los chunks: atrapa cifras exactas y nombres raros que el vector pierde.
 3. **Vectores**: atrapan sinónimos y paráfrasis que el léxico pierde.
 4. **Fusión RRF**, que combina por *posición* y evita calibrar dos escalas incomparables (BM25 no está acotado; el coseno vive en [-1,1]).
@@ -92,7 +92,7 @@ Las evaluaciones lo miden por separado, y el resultado justifica tenerlo: piso s
 
 | Backend | Rol |
 |---|---|
-| `NumpyIndex` | **Oráculo exacto.** A 9 125 chunks el k-NN es un producto matriz-vector: ~1 ms, más rápido que cualquier índice aproximado. Los tests verifican contra él. |
+| `NumpyIndex` | **Oráculo exacto.** A 9 206 chunks el k-NN es un producto matriz-vector: ~1 ms, más rápido que cualquier índice aproximado. Los tests verifican contra él. |
 | `SqliteVecIndex` | Persistente, sobre la SQLite que el proyecto ya usa. |
 | `PgVectorIndex` | Destino de producción; el único que hace ANN filtrado en el motor. |
 
@@ -106,11 +106,13 @@ A esta escala la fuerza bruta alcanza de sobra, y decirlo es parte del diseño: 
 
 DeepSeek —el proveedor de toda la capa IA— **no tiene endpoint de embeddings**; sus docs solo documentan `chat/completions`. Hace falta un segundo proveedor.
 
-- **`ApiEmbedder`** construye el índice que se publica y embebe la consulta en producción. Es obligatorio para el sitio: el índice va estático, pero la pregunta se embebe en tiempo de request y Vercel no puede correr un modelo local. Costo del backfill completo: centavos.
+- **`ApiEmbedder`** construye el índice que se publica y embebe la consulta en producción. Es obligatorio para el sitio: el índice va estático, pero la pregunta se embebe en tiempo de request y Vercel no puede correr un modelo local. Dos proveedores verificados, ambos OpenAI-compatibles y sin tocar código: **Gemini** (`gemini-embedding-001`, free tier, respeta `dimensions=256`) y **OpenAI** (`text-embedding-3-small`). El corpus son ~1,5 M de tokens: con OpenAI el backfill cuesta **USD 0.03** y tarda un minuto; con el free tier de Gemini es gratis pero su cuota de 100 embeddings/minuto lo estira a **~1,5 h** (la corrida diaria, de ~165 chunks, tarda ~2 min).
 - **`LocalEmbedder`** para quien clona sin claves. Usa **model2vec** (inferencia solo-numpy, ~30 MB) y no sentence-transformers + torch (~2,5 GB): el pipeline entero pesa menos que torch.
 - **`FakeEmbedder`** para tests y CI: determinista, sin red, sin modelo, sin claves.
 
 **Consecuencia no obvia:** el índice publicado y la consulta en producción deben usar el **mismo** modelo, o el coseno compara espacios vectoriales distintos y devuelve ruido con total confianza — el peor modo de falla, porque no se nota. Cada índice guarda la firma `{proveedor}:{modelo}:{dims}` y tanto Python como TypeScript se niegan a consultar con otra.
+
+Eso obliga a definir `EMBED_*` **en dos sitios**: en el entorno que construye el índice y en Vercel, que es donde se embebe la pregunta. Ya pasó una vez que solo estuviera en el primero: el sitio siguió respondiendo con el piso determinista y etiquetando `llm-rag`, sin recuperación vectorial y sin que nada fallara. Por eso ahora hay un guard de integridad del artefacto en CI (`pytest -m publicado`) y `ingest --index` se niega a publicar un índice `local:`.
 
 ### El índice en producción
 
@@ -122,32 +124,93 @@ El sitio es estático + `snapshot.json`. Meterle una base de datos en el camino 
 
 | Parte | Chunks | Tamaño | Cambia |
 |---|---|---|---|
-| `rag-historico.{bin,json.gz}` | 8 965 | ~1.2 MB | rara vez |
-| `rag-reciente.{bin,json.gz}` | 160 | ~27 KB | a diario |
+| `rag-historico.{bin,json.gz}` | 9 041 | ~3.0 MB | rara vez |
+| `rag-reciente.{bin,json.gz}` | 165 | ~59 KB | a diario |
 
 **Cuantización.** Los vectores van en int8. Como los embeddings son unitarios, escalar por 127 usa el rango entero completo; el error por componente es 0.0039 (exactamente la cota teórica) y el de score, 0.0046 máximo.
 
 Eso sí reordena casi-empates: medido, el conjunto top-10 coincide con el índice exacto ~4 de cada 8 veces, porque en este corpus muchos chunks están separados por menos de 0.005. **El índice del sitio es aproximado**; el exacto está en el pipeline. Lo que los tests acotan es que ningún puesto se degrade más de 0.02.
 
-### Lo que el sitio NO corre
+### Lo que el sitio corre, y por qué cambió
 
-`web/lib/rag.ts` hace filtro estructurado, búsqueda vectorial y piso determinista — **pero no BM25**.
+`web/lib/rag.ts` hace filtro estructurado, **BM25**, búsqueda vectorial, fusión RRF y piso determinista: la misma escalera que el pipeline.
 
-No es un olvido. Portar BM25 y el parser de fechas en español a TypeScript son dos implementaciones de las mismas reglas, que divergen en cuanto se toque una. El bloque 7 expone el pipeline con FastAPI y ahí el sitio llama a la *misma* implementación en vez de a una copia. Mientras tanto es un subconjunto declarado, y los casos de `web/test/rag.test.ts` espejan los de `pipeline/tests/test_retrieval.py` para que la deriva rompa tests en vez de aparecer como una respuesta rara en producción.
+BM25 estaba deliberadamente fuera. El argumento era bueno: portarlo a TypeScript son dos implementaciones de las mismas reglas, que divergen en cuanto se toque una, y el camino correcto era que el sitio llamara a la API del pipeline en vez de copiarla.
+
+Lo que cambió el cálculo es de dónde viene el riesgo. El embebido de la **consulta** ocurre en cada request contra un proveedor externo con cuota por minuto (el free tier de Gemini son 100 embeddings/min). Cuando esa cuota se agota, el sitio se quedaba sin ningún recuperador: solo el piso determinista. BM25 no depende de nadie — corre sobre el texto que ya viaja en el deploy— así que es la única pieza de recuperación que no se puede caer. **Medido:** construir el índice léxico sobre los 9 206 chunks cuesta 318 ms una vez por proceso (y es perezoso), y 3,85 ms por consulta.
+
+### El contrato de conformidad
+
+Que haya dos implementaciones sigue siendo deuda, pero la garantía de que no divergen dejó de ser **convencional** —espejar cada test a mano, y confiar en acordarse— para ser **por construcción**.
+
+`pipeline/tests/conformidad.py` genera desde `retrieval.py` —la implementación de referencia, la que usan las evaluaciones, la CLI y la API— las salidas esperadas de 31 preguntas, 6 consultas BM25 y 6 fusiones RRF. `web/test/conformidad.test.ts` exige que el sitio las reproduzca exactamente. El ciclo se cierra solo:
+
+1. cambias `retrieval.py` → `test_conformidad.py` falla, diciendo qué caso cambió
+2. regeneras el fixture → pasa
+3. `rag.ts` ya no lo reproduce → el vitest falla
+4. alineas `rag.ts` → pasa todo
+
+Se comparan **orden e ids**, no scores crudos: los dos lenguajes usan float64 pero acumulan en distinto orden, y dos scores separados por 1e-16 no significan nada. El desempate por id —que ambas implementaciones aplican— es lo que hace el orden total y comparable.
+
+**El contrato está probado contra deriva real**, no solo escrito: cambiar la constante de RRF en el sitio rompe 6 casos; quitar una palabra vacía rompe 1, señalando la pregunta exacta; mover el umbral de longitud de token rompe 1. Ese ejercicio encontró además un agujero — el catálogo del fixture no incluía ninguno de los tres nombres reales que ejercitan el filtro de tokens (`Manzana Cte/Para Agua`, `Maiz Marlo/Coronta De Maiz`, `Ajo Criollo O Napuri`), así que esa regla no estaba contratada. Ahora sí.
+
+### La solución de fondo, disponible
+
+`web/lib/api.ts` cierra el círculo: si se define `PRECIOVIVO_API_URL`, `/api/consulta` recupera el contexto llamando a `POST /recuperar` del pipeline en vez de usar el port de TypeScript. Ahí el sitio usa **la misma implementación** que las evaluaciones, la CLI y el servidor MCP — incluido el parser de fechas completo, que el port no cubre entero.
+
+El port no se borra, y no es pereza: el sitio es estático + snapshot, y esa propiedad vale más que la elegancia de tener una sola ruta. Si la API no está configurada, tarda demasiado o devuelve cualquier cosa, se responde igual con el port local; el cliente **nunca lanza**, devuelve `null` y la degradación se declara en un solo sitio. La respuesta lleva `motor: "api" | "local"` para que se sepa cuál corrió.
+
+Mientras el respaldo exista, el contrato de conformidad sigue siendo lo que impide que derive.
 
 ### Degradación
 
 `/api/consulta` baja peldaños, y cada uno responde con datos reales; lo que cambia es cuánta evidencia ve el modelo:
 
-1. **RAG** — contexto recuperado (ventanas, anomalías, ficha).
-2. **Catálogo** — una línea por producto, solo hoy. Si falta `EMBED_API_KEY` o el índice.
-3. **Fallback** — palabras clave, sin modelo. Si falta `AI_API_KEY`.
+1. **RAG híbrido** (`llm-rag`) — BM25 + vectores + piso determinista.
+2. **RAG léxico** (`llm-rag-lexico`) — BM25 + piso, sin vectores. Si el proveedor de embeddings falla o agota su cuota. Sigue siendo recuperación real sobre el histórico.
+3. **Catálogo** (`llm`) — una línea por producto, solo hoy. Si falta el índice.
+4. **Fallback** (`fallback`) — palabras clave, sin modelo. Si falta `AI_API_KEY`.
+
+Cada peldaño se **declara** en la respuesta y en la interfaz. No es cosmético: antes el peldaño 2 se reportaba como `llm-rag` —la búsqueda no corría y la respuesta salía igual, diciendo que sí— y la interfaz, que ni siquiera conocía el valor `llm-rag`, anunciaba toda respuesta con RAG como "coincidencia de palabras clave". Una degradación que no se declara es indistinguible de que todo funcione.
 
 ### Limitaciones conocidas
 
 - **El pollo vivo no está en el corpus.** Llega por SISAP y vive en `snapshot.mercados`; el corpus se construye solo sobre productos GMML. Documentado como caso en el gold set.
 - **La detección de anomalías es hipersensible.** El barrido histórico marca ~4 900 sobre ~74 700 observaciones (6,5%) con umbral z=3.5. No es un bug: la MAD de un precio mayorista es diminuta porque el mismo precio se repite días seguidos, así que cualquier movimiento real supera 3,5 desviaciones robustas. El detector del dashboard tiene la misma propiedad. Aquí solo se acota **cuántas reciben chunk propio** (las 5 más extremas por producto y tipo, más todas las del último día); las demás siguen apareciendo dentro del chunk de su periodo.
-- **Las cifras de esta sección salieron con `FakeEmbedder`**, que mide mecánica (filtros, piso, fusión), no calidad semántica. Con un embebedor real serán otras. `evals/run_retrieval.py` siempre imprime cuál usó.
+- **Las cifras de las tablas de arriba salieron con `FakeEmbedder`**, que mide mecánica (filtros, piso, fusión), no calidad semántica. `evals/run_retrieval.py` siempre imprime cuál usó.
+
+### Medido con un embebedor real
+
+Ya no es una promesa: el índice publicado se construyó con `jina-embeddings-v3` y el gold set se corrió contra él.
+
+| | FakeEmbedder | Jina (real) |
+|---|---|---|
+| recall@k | 1.000 | **1.000** |
+| solo lo recuperado (sin el piso) | 0.759 | **0.862** |
+| solo el piso (sin la búsqueda) | 1.000 | 1.000 |
+| MRR | 0.816 | 0.816 |
+| violaciones | 0 | **2** |
+
+Dos lecturas, y la segunda incomoda.
+
+**La búsqueda mejora de verdad**: aislada del piso determinista sube de 0.759 a 0.862. Es la primera evidencia de que la parte semántica aporta y no solo decora.
+
+**Y aparece un falso positivo que el embebedor de juguete escondía.** El caso `papaya-no-es-papa` pregunta por un producto que **no está en el catálogo** y exige que no se cuelen papas. `FakeEmbedder` lo pasaba por construcción —es una bolsa de tokens hasheados, así que "papaya" y "papa" caen lejos—. Un embebedor semántico las pone cerca y devuelve fichas de papa.
+
+Se probó el arreglo obvio, un umbral de coseno, y **no funciona**:
+
+| consulta | coseno máximo |
+|---|---|
+| `papaya` (no existe en el catálogo) | 0.6444 |
+| `papa` (producto real) | 0.6656 |
+| `zanahoria esta semana` (producto real) | 0.6790 |
+| `¿qué está más barato hoy?` (agregada) | 0.5151 |
+
+Dos centésimas separan una consulta legítima de una que no lo es, y cualquier umbral que las corte mata también las preguntas agregadas. No hay corte posible: papaya y papa **son** parecidas, y una búsqueda por vecino más cercano siempre devuelve algo.
+
+El arreglo va donde sí hay información: el filtro léxico **ya sabe** que ninguna palabra de la pregunta coincide con el catálogo, y esa señal se perdía antes de llegar al modelo. Ahora el prompt lleva un aviso explícito —"NO está entre los que seguimos: dilo, y no respondas con el precio de otro producto por parecido"—. La recuperación sigue devolviendo lo más cercano, que es su trabajo; lo que cambia es que el modelo sabe que es lo más cercano y no una coincidencia.
+
+La evaluación **sigue reportando las 2 violaciones**. No se relajó el gold set para que pasara: el caso mide un riesgo real y el arreglo es del prompt, no de la recuperación.
 
 ## Una sola lógica, cuatro transportes
 
@@ -250,7 +313,7 @@ Detalles que no son accidentales: ambas imágenes corren como **usuario sin priv
 
 ## CI/CD
 
-**`ci.yml`** — en cada push y PR, tres jobs independientes (pipeline, evaluaciones, sitio) para que un fallo del sitio no oculte uno del pipeline. Corre ruff, los 392 tests de pytest, `tsc`, eslint, los 77 de vitest, el build de Next, y **las evaluaciones de recuperación con umbral**: sin ese gate, una regresión en el RAG pasaría verde porque ningún test unitario la ve.
+**`ci.yml`** — en cada push y PR, tres jobs independientes (pipeline, evaluaciones, sitio) para que un fallo del sitio no oculte uno del pipeline. Corre ruff, los 416 tests de pytest, **el guard de integridad del índice publicado**, `tsc`, eslint, los 218 de vitest, el build de Next, y **las evaluaciones de recuperación con umbral**: sin ese gate, una regresión en el RAG pasaría verde porque ningún test unitario la ve.
 
 El CI usa `FakeEmbedder`: determinista, sin red y sin secretos. Eso mide **mecánica**, no calidad semántica — el README lo dice y el runner lo imprime en cada corrida.
 
@@ -296,7 +359,7 @@ cd pipeline
 python -m venv .venv
 .venv/Scripts/activate      # Windows
 pip install -r requirements.txt
-pytest                      # 299 pruebas, sin red ni claves
+pytest                      # 425 pruebas (416 unitarias + 9 del artefacto), sin red ni claves
 ```
 
 Reconstruir el índice RAG (necesita el snapshot ya exportado):

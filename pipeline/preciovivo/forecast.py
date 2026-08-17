@@ -801,11 +801,11 @@ def _comparacion_modelos(series_por_prod: dict[str, list[dict]]) -> dict:
                          ("baseline", "ar1", "volumen", "gbm") if k in cand)
         if n_gbm == 0:
             veredicto = (
-                f"A {h} día(s): el GBM no se evaluó (ningún producto alcanza "
-                f"{MIN_OBS_GBM} observaciones; máx. histórico ~119). MAE -> {comp}. "
-                f"Gana el {ganador}. Honesto: con ~6 meses de data no hay historia "
-                f"para que un modelo de árboles supere al baseline; el código queda "
-                f"listo para activarlo con el backfill venidero.")
+                f"A {h} día(s): el GBM no se evaluó porque ningún producto alcanza "
+                f"las {MIN_OBS_GBM} observaciones que exige. MAE -> {comp}. "
+                f"Gana el {ganador}. Sin esa historia no hay con qué ajustar un "
+                f"modelo de árboles, así que el resultado no dice nada sobre si el "
+                f"GBM sirve; se sabrá cuando el backfill aporte suficientes datos.")
         elif ganador == "gbm":
             veredicto = (
                 f"A {h} día(s), sobre {n_gbm} productos con >= {MIN_OBS_GBM} obs, el "

@@ -80,8 +80,23 @@ def snapshot(ruta: str | None = None, forzar: bool = False) -> dict:
 
 
 def invalidar_cache() -> None:
+    """Descarta el snapshot cacheado Y el recuperador construido a partir de él.
+
+    El recuperador entra acá porque se deriva del snapshot: dejarlo vivo después
+    de invalidar el snapshot dejaría al RAG respondiendo sobre un dataset que ya
+    no es el vigente, en silencio.
+
+    Es también lo que hace herméticos a los tests: `_recuperador` es un global de
+    proceso, así que sin esto el primer test que lograra construirlo se lo fijaría
+    a todos los que corrieran después.
+    """
+    global _recuperador
     with _cache.lock:
         _cache.datos = None
+    # Locks tomados en secuencia, nunca anidados: no hay orden de adquisición que
+    # pueda cruzarse con `recuperador()` y trabarse.
+    with _lock_rec:
+        _recuperador = None
 
 
 # --------------------------------------------------------------------------- #

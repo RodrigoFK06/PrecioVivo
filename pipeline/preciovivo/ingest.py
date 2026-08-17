@@ -337,6 +337,13 @@ def main(argv=None):
                          "reescribirlo engordaría el repo ~2 MB por día")
     ap.add_argument("--no-publicar", action="store_true",
                     help="construye el índice pero NO escribe el artefacto del sitio")
+    ap.add_argument("--permitir-embedder-local", action="store_true",
+                    help="publica el artefacto aunque se haya construido con el "
+                         "embebedor local (model2vec). Por defecto está BLOQUEADO: "
+                         "el sitio embebe la consulta por HTTP y no puede correr un "
+                         "modelo local, así que la firma no coincidiría y la "
+                         "recuperación vectorial quedaría apagada en silencio. "
+                         "Úsalo solo para ensayos a un directorio temporal")
     args = ap.parse_args(argv)
 
     if args.health:
@@ -357,7 +364,8 @@ def main(argv=None):
             return 1
         return main_index(snapshot, granularidad=args.index_granularidad,
                           solo_reciente=args.index_solo_reciente,
-                          publicar=not args.no_publicar)
+                          publicar=not args.no_publicar,
+                          permitir_local=args.permitir_embedder_local)
 
     store = Store()
     store.init_schema()

@@ -33,6 +33,35 @@ export type Forecast = {
 };
 
 /**
+ * MAE walk-forward agregado de cada FAMILIA de modelo para un horizonte, sobre
+ * el mismo conjunto de productos. Lo calcula `forecast._comparacion_modelos`.
+ *
+ * Es la única comparación del proyecto que NO tiene sesgo de selección: cada
+ * familia se evalúa por separado y ninguna participó en elegir a las otras.
+ * Contrasta con `producto.forecast`, donde `metodo` es el argmin sobre un
+ * conjunto que ya incluye a `mae_baseline` — ahí "el modelo le gana al
+ * baseline" es verdad por construcción y no significa nada.
+ */
+export type ComparacionHorizonte = {
+  mae_baseline: number | null;
+  mae_ar1: number | null;
+  mae_volumen: number | null;
+  mae_gbm: number | null;
+  n_productos: number;
+  n_productos_gbm: number;
+  ganador: "baseline" | "ar1" | "volumen" | "gbm" | null;
+  veredicto: string;
+};
+
+export type ComparacionModelos = {
+  horizontes: number[];
+  por_horizonte: Record<string, ComparacionHorizonte>;
+  gbm_disponible: boolean;
+  umbral_gbm: number;
+  veredicto_global: string;
+};
+
+/**
  * Resultado del experimento metodológico (honesto): ¿el volumen ayuda a
  * predecir el precio? volume_helps=false significa que NO.
  */
@@ -43,6 +72,7 @@ export type KillGate = {
   mejora_pct: number;
   detalle: string;
   n_productos: number;
+  comparacion_modelos?: ComparacionModelos;
 };
 
 export type Anomalia = {
@@ -77,7 +107,21 @@ export type VerificacionItem = {
 export type Verificacion = {
   fuente: string;
   url: string;
+  /** Día GMML contrastado — del que la comparación habla. Decide `vigente`. */
   fecha: string | null;
+  /**
+   * Fecha del reporte SISAP usado. Puede ir por DELANTE de `fecha`: SISAP
+   * publica ~06:30 y también los sábados, cuando el GMML no publica.
+   */
+  fecha_sisap?: string | null;
+  /**
+   * Columna de SISAP comparada. 'precio_ayer_kg' cuando el 335 del día de SISAP
+   * todavía no existe: esa columna describe el mismo día que nuestro último 335,
+   * así que es la comparación correcta y no un apaño.
+   */
+  columna_sisap?: "precio_hoy_kg" | "precio_ayer_kg";
+  /** Descripción legible de qué se comparó contra qué. */
+  base?: string;
   /** Umbral de discrepancia en % (|delta| mayor se marca). */
   umbral_pct: number;
   contrastados: number;
@@ -134,6 +178,20 @@ export type Snapshot = {
   verificacion?: Verificacion;
 };
 
+/**
+ * Snapshot memoizado por proceso, invalidado por mtime.
+ *
+ * `snapshot.json` pesa ~3,4 MB. Sin cache, cada request a una ruta dinámica
+ * —`/api/consulta` es `force-dynamic`— lo leía del disco y lo parseaba entero.
+ * Llamaba la atención porque el índice RAG, justo al lado, sí estaba memoizado.
+ *
+ * La clave es el mtime y no un TTL: en producción el archivo solo cambia con un
+ * deploy nuevo (proceso nuevo, cache vacío), y en `next dev` un snapshot
+ * regenerado se recoge en la siguiente petición sin reiniciar nada. Un `stat`
+ * por request es despreciable frente a parsear 3,4 MB.
+ */
+let cacheSnapshot: { mtimeMs: number; datos: Snapshot } | null = null;
+
 // Local-dev data bridge: read the JSON the Python pipeline exports.
 // In production this module is the single swap point to Supabase.
 export async function getSnapshot(): Promise<Snapshot> {
@@ -143,8 +201,14 @@ export async function getSnapshot(): Promise<Snapshot> {
   const { promises: fs } = await import("node:fs");
   const path = await import("node:path");
   const p = path.join(process.cwd(), "data", "snapshot.json");
+
+  const { mtimeMs } = await fs.stat(p);
+  if (cacheSnapshot && cacheSnapshot.mtimeMs === mtimeMs) return cacheSnapshot.datos;
+
   const raw = await fs.readFile(p, "utf-8");
-  return JSON.parse(raw) as Snapshot;
+  const datos = JSON.parse(raw) as Snapshot;
+  cacheSnapshot = { mtimeMs, datos };
+  return datos;
 }
 
 export async function getProducto(slug: string): Promise<Producto | null> {
@@ -184,6 +248,115 @@ export function forecastDe(p: Producto): Forecast | null {
   return p.forecast ?? null;
 }
 
+// ---------------------------------------------------------------------------
+// Comparación honesta de modelos (sin sesgo de selección)
+// ---------------------------------------------------------------------------
+
+export type ClaveFamilia = "baseline" | "ar1" | "volumen" | "gbm";
+
+export type FamiliaModelo = {
+  clave: ClaveFamilia;
+  /** Nombre corto para la interfaz. */
+  etiqueta: string;
+  /** Qué es, en una línea. */
+  descripcion: string;
+  /** MAE walk-forward agregado, en S/ por kg. */
+  mae: number;
+  /**
+   * % de error MENOS que el baseline. Negativo = peor que el baseline.
+   * El baseline no participó en seleccionar a ninguna familia, así que esta
+   * comparación sí significa algo.
+   */
+  mejoraVsBaselinePct: number;
+};
+
+export type ComparacionHonesta = {
+  horizonte: number;
+  nProductos: number;
+  /** Familias evaluadas, de MENOR a MAYOR error. */
+  familias: FamiliaModelo[];
+  ganador: FamiliaModelo;
+  /** El GBM, para poder contrastarlo con el ganador. null si no se evaluó. */
+  gbm: FamiliaModelo | null;
+  /** ¿El modelo más complejo es además el mejor? */
+  gbmGana: boolean;
+};
+
+const ETIQUETAS: Record<ClaveFamilia, { etiqueta: string; descripcion: string }> = {
+  baseline: {
+    etiqueta: "Baseline",
+    descripcion: "el precio de hace una semana, o la media móvil con su pendiente",
+  },
+  ar1: {
+    etiqueta: "AR(1) lineal",
+    descripcion: "una recta por mínimos cuadrados sobre el precio del día anterior",
+  },
+  volumen: {
+    etiqueta: "AR(1) + volumen",
+    descripcion: "la misma recta, más el volumen de ingreso rezagado",
+  },
+  gbm: {
+    etiqueta: "GBM",
+    descripcion: "gradient boosting con lags, día de semana, mes y feriados de Perú",
+  },
+};
+
+/**
+ * Ranking de familias de modelo para un horizonte, derivado del snapshot.
+ *
+ * Por qué existe: el dashboard mostraba "el modelo le gana al baseline en X de N
+ * productos", contando productos donde `forecast.metodo === "gbm" &&
+ * mae_modelo < mae_baseline`. Esa condición es imposible de fallar —
+ * `forecast_producto` ELIGE el método como el argmin del MAE sobre un conjunto
+ * que ya incluye al baseline, así que `mae_modelo <= mae_baseline` para el 100%
+ * de los productos por construcción. Medía la selección, no la capacidad.
+ *
+ * Esta función usa `comparacion_modelos`, donde cada familia se evalúa por
+ * separado sobre el mismo conjunto de productos. Devuelve null si el snapshot no
+ * la trae (snapshots anteriores al bloque de comparación).
+ */
+export function comparacionHonesta(
+  killGate: KillGate | undefined,
+  horizonte = 1,
+): ComparacionHonesta | null {
+  const h = killGate?.comparacion_modelos?.por_horizonte?.[String(horizonte)];
+  if (!h) return null;
+
+  const base = h.mae_baseline;
+  if (base == null || base <= 0) return null;
+
+  const crudas: [ClaveFamilia, number | null][] = [
+    ["baseline", h.mae_baseline],
+    ["ar1", h.mae_ar1],
+    ["volumen", h.mae_volumen],
+    ["gbm", h.mae_gbm],
+  ];
+
+  const familias: FamiliaModelo[] = crudas
+    .filter((par): par is [ClaveFamilia, number] => par[1] != null)
+    .map(([clave, mae]) => ({
+      clave,
+      ...ETIQUETAS[clave],
+      mae,
+      mejoraVsBaselinePct: ((base - mae) / base) * 100,
+    }))
+    .sort((a, b) => a.mae - b.mae);
+
+  if (!familias.length) return null;
+
+  const ganador = familias[0];
+  const gbm = familias.find((f) => f.clave === "gbm") ?? null;
+
+  return {
+    horizonte,
+    nProductos: h.n_productos,
+    familias,
+    ganador,
+    gbm,
+    gbmGana: ganador.clave === "gbm",
+  };
+}
+
 /** Mercados adicionales al GMML con al menos un precio publicable (puro). */
 export function mercadosExtra(s: Snapshot): MercadoExtra[] {
   return (s.mercados ?? []).filter((m) =>
@@ -217,6 +390,23 @@ export function buscarProductos(productos: Producto[], q: string): Producto[] {
   const needle = norm(q);
   if (!needle) return productos;
   return productos.filter((p) => norm(p.nombre).includes(needle));
+}
+
+/**
+ * Reduce una serie a como mucho `max` puntos, conservando su FORMA.
+ *
+ * Muestreo uniforme y no "los últimos N": quedarse con la cola escondería
+ * justo el pico viejo que una comparación a dos años quiere mostrar. El último
+ * punto se preserva siempre — es el dato vigente y no puede perderse por un
+ * redondeo del paso. Mismo criterio que `mcp_server.serie_historica`.
+ */
+export function submuestrear(series: Point[], max: number): Point[] {
+  if (series.length <= max) return series;
+  const paso = Math.ceil(series.length / max);
+  const out = series.filter((_, i) => i % paso === 0);
+  const ultimo = series[series.length - 1];
+  if (out[out.length - 1] !== ultimo) out.push(ultimo);
+  return out;
 }
 
 export function stats(series: Point[]) {

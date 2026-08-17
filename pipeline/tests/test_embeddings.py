@@ -162,3 +162,143 @@ def test_clasificacion_de_errores(codigo, permanente):
 def test_error_sin_codigo_se_reintenta():
     """Un fallo de red no trae status: hay que asumir que es transitorio."""
     assert E._es_error_permanente(ConnectionError("sin red")) is False
+
+
+# --------------------------------------------------------------------------- #
+# Guard: el proveedor tiene que respetar `dimensions`
+# --------------------------------------------------------------------------- #
+def test_api_embedder_rechaza_dims_distintas_a_las_pedidas(monkeypatch):
+    """Un proveedor OpenAI-compatible puede IGNORAR `dimensions` y devolver el
+    tamaño nativo del modelo. Si eso pasara en silencio, `firma` diría
+    'api:<modelo>:256' mientras los vectores tienen otro tamaño: el índice
+    quedaría mal etiquetado, pesaría mucho más de lo previsto, y el guard de
+    firma del sitio lo daría por bueno.
+    """
+    import numpy as np
+    import pytest
+
+    from preciovivo.embeddings import ApiEmbedder
+
+    emb = ApiEmbedder.__new__(ApiEmbedder)  # sin red ni clave
+    emb.dims = 256
+    emb.modelo_nombre = "modelo-de-prueba"
+    emb.firma = "api:modelo-de-prueba:256"
+
+    # Lo correcto pasa tal cual.
+    ok = np.zeros((3, 256), dtype=np.float32)
+    assert emb._verificar_dims(ok).shape == (3, 256)
+
+    # El tamaño nativo colado en vez del pedido, revienta con el número a la vista.
+    nativo = np.zeros((3, 3072), dtype=np.float32)
+    with pytest.raises(RuntimeError, match="3072"):
+        emb._verificar_dims(nativo)
+
+
+# --------------------------------------------------------------------------- #
+# Cuota (429): esperar lo que el servidor pide, no lo que adivinaríamos
+# --------------------------------------------------------------------------- #
+class _Error429(Exception):
+    status_code = 429
+
+
+def test_espera_sugerida_lee_el_retry_delay_del_proveedor():
+    """Un 429 no es un fallo: es "todavía no", y viene con el número exacto.
+
+    El backoff genérico era de 1.5^n segundos (1, 1.5, 2.25) contra ventanas de
+    cuota de ~35 s: los cuatro intentos se agotaban sin haber esperado ni una
+    décima parte de lo necesario, y el backfill moría con la cuota intacta.
+    """
+    from preciovivo.embeddings import _espera_sugerida
+
+    # Formato de texto de Google.
+    assert _espera_sugerida(_Error429("Please retry in 34.071919166s.")) == 34.071919166
+    # Bloque RetryInfo del mismo error.
+    assert _espera_sugerida(_Error429("... 'retryDelay': '21s' ...")) == 21.0
+    # Sin pista alguna: cae al valor por defecto, no a cero.
+    assert _espera_sugerida(_Error429("boom"), por_defecto=17.0) == 17.0
+
+
+def test_cabecera_retry_after_tiene_prioridad():
+    from preciovivo.embeddings import _espera_sugerida
+
+    class _Resp:
+        headers = {"retry-after": "12"}
+
+    e = _Error429("Please retry in 99s.")
+    e.response = _Resp()
+    assert _espera_sugerida(e) == 12.0
+
+
+def test_un_429_no_se_confunde_con_un_error_permanente():
+    from preciovivo.embeddings import _es_cuota, _es_error_permanente
+
+    assert _es_cuota(_Error429("cuota"))
+    assert not _es_error_permanente(_Error429("cuota"))
+
+    class _Error400(Exception):
+        status_code = 400
+
+    # Un request inválido NO se reintenta: reintentarlo es quemar tiempo.
+    assert _es_error_permanente(_Error400("modelo inexistente"))
+    assert not _es_cuota(_Error400("modelo inexistente"))
+
+
+# --------------------------------------------------------------------------- #
+# Clasificación de 429: throttle recuperable vs cuota agotada
+#
+# Los tres casos son REALES, observados contra dos proveedores. La distinción
+# importa porque el error es el mismo código HTTP y las consecuencias son
+# opuestas: ante un throttle hay que esperar y seguir; ante una cuota agotada,
+# esperar es tiempo tirado contra una pared.
+# --------------------------------------------------------------------------- #
+def test_clasificar_cuota_con_retry_info_explicito():
+    """Gemini, límite por minuto: trae `retryDelay` y hay que hacerle caso."""
+    from preciovivo.embeddings import _clasificar_cuota
+
+    e = _Error429("... 'retryDelay': '34s' ... RESOURCE_EXHAUSTED")
+    recuperable, espera = _clasificar_cuota(e)
+    assert recuperable and espera == 34.0
+
+
+def test_clasificar_cuota_limite_por_minuto_solo_en_el_texto():
+    """Jina: sin metadatos, pero el MENSAJE dice que es por minuto.
+
+    Este caso rompió la heurística anterior —que solo miraba si había
+    RetryInfo— y abortó un backfill que únicamente necesitaba esperar.
+    """
+    from preciovivo.embeddings import VENTANA_MINUTO, _clasificar_cuota
+
+    e = _Error429("Token rate limit exceeded: 100,452/100,000 tokens per minute. "
+                  "Reduce batch sizes or upgrade your plan.")
+    recuperable, espera = _clasificar_cuota(e)
+    assert recuperable, "un límite por minuto SIEMPRE es recuperable"
+    assert espera == VENTANA_MINUTO
+
+
+def test_clasificar_cuota_diaria_no_es_recuperable():
+    """Gemini free tier: 1.000 embeddings por DÍA. Esperar no lo arregla."""
+    from preciovivo.embeddings import _clasificar_cuota
+
+    e = _Error429("Quota exceeded for metric: embed_content_free_tier_requests, "
+                  "limit: 1000 ... quotaId: "
+                  "'EmbedContentRequestsPerDayPerUserPerProjectPerModel-FreeTier'")
+    recuperable, _ = _clasificar_cuota(e)
+    assert not recuperable
+
+
+def test_clasificar_cuota_sin_pistas_es_conservador():
+    """Sin señal, no se insiste: se falla rápido y con un mensaje que orienta."""
+    from preciovivo.embeddings import _clasificar_cuota
+
+    assert _clasificar_cuota(_Error429("algo salió mal")) == (False, 0.0)
+
+
+def test_la_cabecera_retry_after_gana_a_todo():
+    from preciovivo.embeddings import _clasificar_cuota
+
+    class _Resp:
+        headers = {"retry-after": "7"}
+
+    e = _Error429("tokens per minute ... 'retryDelay': '99s'")
+    e.response = _Resp()
+    assert _clasificar_cuota(e) == (True, 7.0)

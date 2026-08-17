@@ -1,9 +1,15 @@
+import type { ComparacionHonesta } from "@/lib/data";
+
 type Props = {
   mercado: string;
   nProductos: number;
   nFechas: number;
-  iaGana: number;
-  conForecast: number;
+  /**
+   * Comparación por familia de modelo, sin sesgo de selección. Sustituye al par
+   * `iaGana`/`conForecast` anterior, que publicaba una comparación tautológica
+   * (el método se elige por tener el menor MAE contra ese mismo baseline).
+   */
+  comparacion?: ComparacionHonesta | null;
 };
 
 const PASOS = [
@@ -17,7 +23,7 @@ const PASOS = [
     n: "02",
     titulo: "Cómo la nutrimos",
     texto:
-      "Descargamos el PDF del día, lo leemos por coordenadas, normalizamos los nombres y lo acumulamos en una serie histórica continua. Sobre esa serie entrenamos un modelo (GBM) con validación walk-forward para predecir el precio de mañana.",
+      "Descargamos el PDF del día, lo leemos por coordenadas, normalizamos los nombres y lo acumulamos en una serie histórica continua. Sobre esa serie entrenamos varias familias de modelo — desde una recta AR(1) hasta gradient boosting — y las comparamos con validación walk-forward para quedarnos con la de menor error.",
   },
   {
     n: "03",
@@ -28,7 +34,7 @@ const PASOS = [
 ];
 
 /** Explica de dónde sale la data, cómo la procesamos y cuál es el valor. */
-export default function ComoFunciona({ mercado, nProductos, nFechas, iaGana, conForecast }: Props) {
+export default function ComoFunciona({ mercado, nProductos, nFechas, comparacion }: Props) {
   const anios = Math.max(1, Math.round(nFechas / 250));
   return (
     <div>
@@ -43,11 +49,18 @@ export default function ComoFunciona({ mercado, nProductos, nFechas, iaGana, con
       </ol>
       <p className="mt-3 text-xs leading-relaxed text-faint">
         <span className="text-muted">{mercado}</span> · {nProductos} productos · ~{anios} años de
-        historia · actualizado cada día hábil · el modelo ya le gana al baseline en{" "}
-        <span className="text-down tabular-nums">
-          {iaGana} de {conForecast}
-        </span>{" "}
-        productos. Solo republicamos hechos numéricos; no redistribuimos los documentos fuente.
+        historia · actualizado cada día hábil
+        {comparacion && (
+          <>
+            {" "}
+            · el mejor modelo ({comparacion.ganador.etiqueta}) baja el error{" "}
+            <span className="text-down tabular-nums">
+              {Math.round(comparacion.ganador.mejoraVsBaselinePct)}%
+            </span>{" "}
+            frente al baseline sobre {comparacion.nProductos} productos
+          </>
+        )}
+        . Solo republicamos hechos numéricos; no redistribuimos los documentos fuente.
       </p>
     </div>
   );

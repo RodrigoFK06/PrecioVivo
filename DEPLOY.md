@@ -12,7 +12,22 @@ snapshot cada día y lo publica; Vercel redeploya solo.
    - `AI_API_KEY` = tu clave de DeepSeek
    - `AI_BASE_URL` = `https://api.deepseek.com`
    - `AI_MODEL` = `deepseek-chat`
+   - `EMBED_API_KEY`, `EMBED_BASE_URL`, `EMBED_MODEL`, `EMBED_DIMS` — **necesarias para el RAG**
 4. Deploy. Listo: ya hay URL pública con los datos actuales.
+
+> **Las variables `EMBED_*` van en Vercel, no solo en tu máquina.** El índice viaja en el deploy,
+> pero la **pregunta** se embebe en cada request desde el servidor de Vercel. Si la clave vive solo
+> en local, la firma no coincide, `/api/consulta` degrada a recuperación léxica y el sitio responde
+> igual — sin búsqueda semántica y sin que nada falle a la vista. Los valores deben ser **los
+> mismos** que construyeron `web/data/rag-*.bin`; si no, se compararían espacios vectoriales
+> distintos. `pytest -m publicado` verifica esa coincidencia en CI antes de que llegue a producción.
+
+### Opcional: apuntar el sitio a la API del pipeline
+Si despliegas `preciovivo.api` en algún sitio, define en Vercel `PRECIOVIVO_API_URL` y
+`PRECIOVIVO_API_KEY`. Entonces `/api/consulta` recupera el contexto llamando a `POST /recuperar` en
+vez de usar el port de TypeScript de `web/lib/rag.ts` — es decir, la **misma** implementación que
+las evaluaciones, la CLI y el servidor MCP. Si la API no responde a tiempo, el sitio cae al port
+local: no se vuelve una dependencia dura.
 
 ## 2. DeepSeek (la capa IA)
 - Saca una API key en [platform.deepseek.com](https://platform.deepseek.com).

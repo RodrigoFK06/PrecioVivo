@@ -1,0 +1,720 @@
+{
+  "_generado_por": "pipeline/tests/conformidad.py",
+  "_por_que": "Contrato entre retrieval.py (referencia) y web/lib/rag.ts. Regenerar: cd pipeline && python tests/conformidad.py",
+  "fecha_ref": "2026-08-14",
+  "catalogo": {
+    "papa-blanca": "Papa Blanca",
+    "papa-amarilla": "Papa Amarilla",
+    "papa-canchan": "Papa Canchan",
+    "papaya": "Papaya",
+    "ajo-criollo-o-napuri": "Ajo Criollo O Napuri",
+    "ajo-morado": "Ajo Morado",
+    "tomate": "Tomate",
+    "zanahoria": "Zanahoria",
+    "maiz-choclo-serrano": "Maiz Choclo Serrano",
+    "limon-sutil-cajon": "Limon Sutil Cajon",
+    "manzana-cte-para-agua": "Manzana Cte/Para Agua",
+    "maiz-marlo-coronta-de-maiz": "Maiz Marlo/Coronta De Maiz"
+  },
+  "rrf_c": 60,
+  "parseo": [
+    {
+      "pregunta": "¿por qué subió la papa esta semana?",
+      "tokens": [
+        "por",
+        "que",
+        "subio",
+        "la",
+        "papa",
+        "esta",
+        "semana"
+      ],
+      "slugs": [
+        "papa-amarilla",
+        "papa-blanca",
+        "papa-canchan"
+      ],
+      "desde": "2026-08-10",
+      "hasta": "2026-08-14",
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "¿cuánto costó el tomate el 15 de julio?",
+      "tokens": [
+        "cuanto",
+        "costo",
+        "el",
+        "tomate",
+        "el",
+        "15",
+        "de",
+        "julio"
+      ],
+      "slugs": [
+        "tomate"
+      ],
+      "desde": "2026-07-15",
+      "hasta": "2026-07-15",
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "¿qué pasó con la zanahoria en julio?",
+      "tokens": [
+        "que",
+        "paso",
+        "con",
+        "la",
+        "zanahoria",
+        "en",
+        "julio"
+      ],
+      "slugs": [
+        "zanahoria"
+      ],
+      "desde": "2026-07-01",
+      "hasta": "2026-07-31",
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "precio del tomate ayer",
+      "tokens": [
+        "precio",
+        "del",
+        "tomate",
+        "ayer"
+      ],
+      "slugs": [
+        "tomate"
+      ],
+      "desde": "2026-08-13",
+      "hasta": "2026-08-13",
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "papa blanca hoy",
+      "tokens": [
+        "papa",
+        "blanca",
+        "hoy"
+      ],
+      "slugs": [
+        "papa-blanca"
+      ],
+      "desde": "2026-08-14",
+      "hasta": "2026-08-14",
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "zanahoria en los ultimos 30 dias",
+      "tokens": [
+        "zanahoria",
+        "en",
+        "los",
+        "ultimos",
+        "30",
+        "dias"
+      ],
+      "slugs": [
+        "zanahoria"
+      ],
+      "desde": "2026-07-15",
+      "hasta": "2026-08-14",
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "tomate la semana pasada",
+      "tokens": [
+        "tomate",
+        "la",
+        "semana",
+        "pasada"
+      ],
+      "slugs": [
+        "tomate"
+      ],
+      "desde": "2026-08-03",
+      "hasta": "2026-08-09",
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "tomate el mes pasado",
+      "tokens": [
+        "tomate",
+        "el",
+        "mes",
+        "pasado"
+      ],
+      "slugs": [
+        "tomate"
+      ],
+      "desde": "2026-07-01",
+      "hasta": "2026-07-31",
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "zanahoria este mes",
+      "tokens": [
+        "zanahoria",
+        "este",
+        "mes"
+      ],
+      "slugs": [
+        "zanahoria"
+      ],
+      "desde": "2026-08-01",
+      "hasta": "2026-08-14",
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "papa el año pasado",
+      "tokens": [
+        "papa",
+        "el",
+        "ano",
+        "pasado"
+      ],
+      "slugs": [
+        "papa-amarilla",
+        "papa-blanca",
+        "papa-canchan"
+      ],
+      "desde": "2025-01-01",
+      "hasta": "2025-12-31",
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "tomate este año",
+      "tokens": [
+        "tomate",
+        "este",
+        "ano"
+      ],
+      "slugs": [
+        "tomate"
+      ],
+      "desde": "2026-01-01",
+      "hasta": "2026-08-14",
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "tomate en 2026-03-11",
+      "tokens": [
+        "tomate",
+        "en",
+        "2026",
+        "03",
+        "11"
+      ],
+      "slugs": [
+        "tomate"
+      ],
+      "desde": "2026-03-11",
+      "hasta": "2026-03-11",
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "compara ajo morado con ajo criollo",
+      "tokens": [
+        "compara",
+        "ajo",
+        "morado",
+        "con",
+        "ajo",
+        "criollo"
+      ],
+      "slugs": [
+        "ajo-criollo-o-napuri",
+        "ajo-morado"
+      ],
+      "desde": null,
+      "hasta": null,
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "¿a cuánto está la papa?",
+      "tokens": [
+        "a",
+        "cuanto",
+        "esta",
+        "la",
+        "papa"
+      ],
+      "slugs": [
+        "papa-amarilla",
+        "papa-blanca",
+        "papa-canchan"
+      ],
+      "desde": null,
+      "hasta": null,
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "¿y la papaya?",
+      "tokens": [
+        "y",
+        "la",
+        "papaya"
+      ],
+      "slugs": [
+        "papaya"
+      ],
+      "desde": null,
+      "hasta": null,
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "napuri",
+      "tokens": [
+        "napuri"
+      ],
+      "slugs": [
+        "ajo-criollo-o-napuri"
+      ],
+      "desde": null,
+      "hasta": null,
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "maiz choclo serrano",
+      "tokens": [
+        "maiz",
+        "choclo",
+        "serrano"
+      ],
+      "slugs": [
+        "maiz-choclo-serrano",
+        "maiz-marlo-coronta-de-maiz"
+      ],
+      "desde": null,
+      "hasta": null,
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "¿cuánto suele costar la zanahoria en agosto?",
+      "tokens": [
+        "cuanto",
+        "suele",
+        "costar",
+        "la",
+        "zanahoria",
+        "en",
+        "agosto"
+      ],
+      "slugs": [
+        "zanahoria"
+      ],
+      "desde": null,
+      "hasta": null,
+      "estacional": true,
+      "tipos": [
+        "producto-perfil",
+        "producto-periodo"
+      ]
+    },
+    {
+      "pregunta": "¿el tomate normalmente sube en julio?",
+      "tokens": [
+        "el",
+        "tomate",
+        "normalmente",
+        "sube",
+        "en",
+        "julio"
+      ],
+      "slugs": [
+        "tomate"
+      ],
+      "desde": null,
+      "hasta": null,
+      "estacional": true,
+      "tipos": [
+        "producto-perfil",
+        "producto-periodo"
+      ]
+    },
+    {
+      "pregunta": "precio historico del limon",
+      "tokens": [
+        "precio",
+        "historico",
+        "del",
+        "limon"
+      ],
+      "slugs": [
+        "limon-sutil-cajon"
+      ],
+      "desde": null,
+      "hasta": null,
+      "estacional": true,
+      "tipos": [
+        "producto-perfil",
+        "producto-periodo"
+      ]
+    },
+    {
+      "pregunta": "¿qué está más barato hoy?",
+      "tokens": [
+        "que",
+        "esta",
+        "mas",
+        "barato",
+        "hoy"
+      ],
+      "slugs": [],
+      "desde": "2026-08-14",
+      "hasta": "2026-08-14",
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "¿hubo algo raro esta semana?",
+      "tokens": [
+        "hubo",
+        "algo",
+        "raro",
+        "esta",
+        "semana"
+      ],
+      "slugs": [],
+      "desde": "2026-08-10",
+      "hasta": "2026-08-14",
+      "estacional": false,
+      "tipos": [
+        "evento-anomalia",
+        "producto-periodo"
+      ]
+    },
+    {
+      "pregunta": "¿qué tubérculos subieron?",
+      "tokens": [
+        "que",
+        "tuberculos",
+        "subieron"
+      ],
+      "slugs": [],
+      "desde": null,
+      "hasta": null,
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "manzana para agua",
+      "tokens": [
+        "manzana",
+        "para",
+        "agua"
+      ],
+      "slugs": [
+        "manzana-cte-para-agua"
+      ],
+      "desde": null,
+      "hasta": null,
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "¿qué sirve para el jugo?",
+      "tokens": [
+        "que",
+        "sirve",
+        "para",
+        "el",
+        "jugo"
+      ],
+      "slugs": [],
+      "desde": null,
+      "hasta": null,
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "maiz marlo",
+      "tokens": [
+        "maiz",
+        "marlo"
+      ],
+      "slugs": [
+        "maiz-marlo-coronta-de-maiz"
+      ],
+      "desde": null,
+      "hasta": null,
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "¿a cuánto está el maiz?",
+      "tokens": [
+        "a",
+        "cuanto",
+        "esta",
+        "el",
+        "maiz"
+      ],
+      "slugs": [
+        "maiz-marlo-coronta-de-maiz"
+      ],
+      "desde": null,
+      "hasta": null,
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "napuri o criollo",
+      "tokens": [
+        "napuri",
+        "o",
+        "criollo"
+      ],
+      "slugs": [
+        "ajo-criollo-o-napuri"
+      ],
+      "desde": null,
+      "hasta": null,
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "",
+      "tokens": [],
+      "slugs": [],
+      "desde": null,
+      "hasta": null,
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "xyzzy qwerty",
+      "tokens": [
+        "xyzzy",
+        "qwerty"
+      ],
+      "slugs": [],
+      "desde": null,
+      "hasta": null,
+      "estacional": false,
+      "tipos": null
+    },
+    {
+      "pregunta": "el 31 de febrero",
+      "tokens": [
+        "el",
+        "31",
+        "de",
+        "febrero"
+      ],
+      "slugs": [],
+      "desde": "2026-02-01",
+      "hasta": "2026-02-28",
+      "estacional": false,
+      "tipos": null
+    }
+  ],
+  "corpus": [
+    {
+      "id": "producto-periodo:papa-blanca:2026-W32",
+      "texto": "Papa Blanca · semana 2026-W32 · GMML.\nPrecio: abrió en S/ 2.00/kg el 3 de agosto y cerró en S/ 2.40/kg el 7 de agosto (+20.0% en el periodo)."
+    },
+    {
+      "id": "producto-periodo:papa-amarilla:2026-W32",
+      "texto": "Papa Amarilla · semana 2026-W32 · GMML.\nPrecio: abrió en S/ 3.50/kg el 3 de agosto y cerró en S/ 3.60/kg el 7 de agosto (+2.9% en el periodo)."
+    },
+    {
+      "id": "producto-perfil:papaya",
+      "texto": "Ficha de Papaya (papaya) · GMML.\nPrecio histórico: mínimo S/ 1.80, máximo S/ 5.20, promedio S/ 3.10 por kg."
+    },
+    {
+      "id": "evento-anomalia:tomate:2026-08-05:precio",
+      "texto": "Anomalía de precio · Tomate · miércoles 5 de agosto de 2026 · GMML.\nEl valor observado (precio S/ 6.20/kg) se apartó 4.1 desviaciones robustas de su historia reciente."
+    },
+    {
+      "id": "mercado-dia:2026-08-07",
+      "texto": "GMML · viernes 7 de agosto de 2026.\n72 productos con precio publicado. Lo más barato del día: Papa Yungay (S/ 0.88/kg)."
+    },
+    {
+      "id": "producto-periodo:zanahoria:2026-W32",
+      "texto": "Zanahoria · semana 2026-W32 · GMML.\nPrecio: abrió en S/ 0.80/kg y cerró en S/ 0.87/kg. Tendencia reportada por la fuente: En Alza (3 días)."
+    }
+  ],
+  "bm25": [
+    {
+      "pregunta": "papa",
+      "ids": [
+        "mercado-dia:2026-08-07",
+        "producto-periodo:papa-amarilla:2026-W32",
+        "producto-periodo:papa-blanca:2026-W32"
+      ]
+    },
+    {
+      "pregunta": "papaya",
+      "ids": [
+        "producto-perfil:papaya"
+      ]
+    },
+    {
+      "pregunta": "precio",
+      "ids": [
+        "evento-anomalia:tomate:2026-08-05:precio",
+        "producto-perfil:papaya",
+        "mercado-dia:2026-08-07",
+        "producto-periodo:zanahoria:2026-W32",
+        "producto-periodo:papa-amarilla:2026-W32",
+        "producto-periodo:papa-blanca:2026-W32"
+      ]
+    },
+    {
+      "pregunta": "anomalía de precio en tomate",
+      "ids": [
+        "evento-anomalia:tomate:2026-08-05:precio",
+        "producto-periodo:papa-amarilla:2026-W32",
+        "producto-periodo:papa-blanca:2026-W32",
+        "producto-periodo:zanahoria:2026-W32",
+        "mercado-dia:2026-08-07",
+        "producto-perfil:papaya"
+      ]
+    },
+    {
+      "pregunta": "semana 2026-W32",
+      "ids": [
+        "producto-periodo:zanahoria:2026-W32",
+        "producto-periodo:papa-amarilla:2026-W32",
+        "producto-periodo:papa-blanca:2026-W32",
+        "mercado-dia:2026-08-07",
+        "evento-anomalia:tomate:2026-08-05:precio"
+      ]
+    },
+    {
+      "pregunta": "xyzzyqwerty",
+      "ids": []
+    }
+  ],
+  "rrf": [
+    {
+      "listas": [
+        [
+          "a",
+          "b",
+          "c"
+        ],
+        [
+          "b",
+          "a",
+          "c"
+        ]
+      ],
+      "orden": [
+        "a",
+        "b",
+        "c"
+      ],
+      "scores": {
+        "a": 0.032522475,
+        "b": 0.032522475,
+        "c": 0.031746032
+      }
+    },
+    {
+      "listas": [
+        [
+          "a"
+        ],
+        [
+          "a"
+        ]
+      ],
+      "orden": [
+        "a"
+      ],
+      "scores": {
+        "a": 0.032786885
+      }
+    },
+    {
+      "listas": [
+        [
+          "a"
+        ],
+        [
+          "b"
+        ]
+      ],
+      "orden": [
+        "a",
+        "b"
+      ],
+      "scores": {
+        "a": 0.016393443,
+        "b": 0.016393443
+      }
+    },
+    {
+      "listas": [
+        [],
+        []
+      ],
+      "orden": [],
+      "scores": {}
+    },
+    {
+      "listas": [
+        [
+          "a",
+          "b",
+          "c"
+        ]
+      ],
+      "orden": [
+        "a",
+        "b",
+        "c"
+      ],
+      "scores": {
+        "a": 0.016393443,
+        "b": 0.016129032,
+        "c": 0.015873016
+      }
+    },
+    {
+      "listas": [
+        [
+          "x",
+          "y"
+        ],
+        [
+          "y",
+          "z"
+        ],
+        [
+          "z",
+          "x"
+        ]
+      ],
+      "orden": [
+        "x",
+        "y",
+        "z"
+      ],
+      "scores": {
+        "x": 0.032522475,
+        "y": 0.032522475,
+        "z": 0.032522475
+      }
+    }
+  ]
+}

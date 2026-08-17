@@ -1,4 +1,11 @@
-import { getSnapshot, movers, supplySurges, mercadosExtra, type Producto } from "@/lib/data";
+import {
+  getSnapshot,
+  movers,
+  supplySurges,
+  mercadosExtra,
+  comparacionHonesta,
+  type Producto,
+} from "@/lib/data";
 import { soles, pct, tons, fechaLarga, moveBg } from "@/lib/format";
 import AISummary from "@/components/AISummary";
 import ConsultaBox from "@/components/ConsultaBox";
@@ -17,17 +24,30 @@ import Link from "next/link";
 
 export const dynamic = "force-static";
 
+/**
+ * Resumen DESCRIPTIVO de la capa de pronóstico: cuántos productos tienen modelo
+ * y cuál método quedó elegido en cada uno.
+ *
+ * Deliberadamente NO afirma superioridad sobre un baseline. La versión anterior
+ * contaba productos con `metodo === "gbm" && mae_modelo < mae_baseline` y
+ * publicaba eso como "el modelo le gana al baseline". Esa condición no puede
+ * fallar: `forecast_producto` elige `metodo` como el argmin del MAE
+ * walk-forward sobre un conjunto que ya contiene al baseline, así que
+ * `mae_modelo <= mae_baseline` se cumple en el 100% de los productos por
+ * construcción. Contaba cuántas veces ganó el argmin, no cuántas veces el
+ * modelo es mejor.
+ *
+ * La afirmación de capacidad vive ahora en `comparacionHonesta`, que compara
+ * familias evaluadas por separado sobre el mismo conjunto de productos.
+ */
 function resumenModeloIA(productos: Producto[]): ModeloIAResumen {
   const conForecast = productos.filter((p) => p.forecast).length;
-  const ganadores = productos.filter(
-    (p) => p.forecast?.metodo === "gbm" && p.forecast.mae_modelo < p.forecast.mae_baseline,
-  );
-  const mejoras = ganadores.map(
-    (p) => ((p.forecast!.mae_baseline - p.forecast!.mae_modelo) / p.forecast!.mae_baseline) * 100,
-  );
-  const mejoraMediaPct =
-    mejoras.length > 0 ? mejoras.reduce((a, b) => a + b, 0) / mejoras.length : 0;
-  return { conForecast, iaGana: ganadores.length, mejoraMediaPct };
+  const porMetodo: Record<string, number> = {};
+  for (const p of productos) {
+    const m = p.forecast?.metodo;
+    if (m) porMetodo[m] = (porMetodo[m] ?? 0) + 1;
+  }
+  return { conForecast, porMetodo };
 }
 
 function Stat({
@@ -125,6 +145,9 @@ export default async function Home() {
   const surge = supplySurges(snap, 5);
   const productos = [...snap.productos].sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
   const modeloIA = resumenModeloIA(snap.productos);
+  // La comparación SIN sesgo de selección: cada familia evaluada por separado
+  // sobre el mismo conjunto de productos. Es de donde salen las cifras del hero.
+  const comp = comparacionHonesta(snap.forecastMeta?.kill_gate, 1);
   const alertas = ((snap as unknown as { alertas?: Alerta[] }).alertas ?? []) as Alerta[];
   const nUp = snap.productos.filter((p) => (p.latest.var_pct ?? 0) > 0).length;
   const nDown = snap.productos.filter((p) => (p.latest.var_pct ?? 0) < 0).length;
@@ -133,16 +156,9 @@ export default async function Home() {
   // serie que necesita. La serie completa de 2 años vive en /p/[slug] (server).
   const recorta = (p: Producto, n: number): Producto =>
     p.series.length <= n ? p : { ...p, series: p.series.slice(-n) };
-  const submuestrea = (p: Producto, max: number): Producto => {
-    if (p.series.length <= max) return p;
-    const paso = Math.ceil(p.series.length / max);
-    const s = p.series.filter((_, i) => i % paso === 0);
-    const ultimo = p.series[p.series.length - 1];
-    if (s[s.length - 1] !== ultimo) s.push(ultimo);
-    return { ...p, series: s };
-  };
   const productosTabla = productos.map((p) => recorta(p, 30)); // sparkline 30d
-  const productosComparador = snap.productos.map((p) => submuestrea(p, 140)); // tendencia 2a
+  // El comparador ya NO recibe series: las pide a /series/[slug] al seleccionar.
+  // Enviarlas aquí eran 0,86 MB por visita para graficar como mucho 5 productos.
   const productosLigeros = snap.productos.map((p) => ({ ...p, series: [] })); // solo nombre/slug
 
   return (
@@ -161,16 +177,32 @@ export default async function Home() {
           Los precios del mercado, leídos con IA
         </h1>
         <p className="mt-4 text-lg text-muted max-w-2xl leading-relaxed">
-          Predecimos los precios mayoristas del Gran Mercado de Lima — y el modelo ya le gana al
-          baseline en{" "}
-          <span className="text-ink font-medium tabular-nums">
-            {modeloIA.iaGana} de {modeloIA.conForecast}
-          </span>{" "}
-          productos, con{" "}
-          <span className="text-down font-medium tabular-nums">
-            ~{Math.round(modeloIA.mejoraMediaPct)}% menos error
-          </span>
-          . Lo probamos en público — y decimos también qué no funciona.
+          Predecimos el precio del próximo día hábil para{" "}
+          <span className="text-ink font-medium tabular-nums">{modeloIA.conForecast}</span> productos
+          del Gran Mercado de Lima.{" "}
+          {comp ? (
+            <>
+              El mejor modelo baja el error{" "}
+              <span className="text-down font-medium tabular-nums">
+                {Math.round(comp.ganador.mejoraVsBaselinePct)}%
+              </span>{" "}
+              frente al baseline
+              {comp.gbmGana ? (
+                <>
+                  , y es el <span className="text-ink font-medium">{comp.ganador.etiqueta}</span>.
+                </>
+              ) : (
+                <>
+                  {" "}
+                  — y resultó ser{" "}
+                  <span className="text-ink font-medium">{comp.ganador.etiqueta}</span>, no el
+                  gradient boosting. Publicamos también lo que no funciona.
+                </>
+              )}
+            </>
+          ) : (
+            <>Publicamos también lo que no funciona.</>
+          )}
         </p>
 
         {/* tira de cifras (newspaper "by the numbers") */}
@@ -178,8 +210,24 @@ export default async function Home() {
           data-guia="cifras"
           className="mt-9 grid grid-cols-2 sm:grid-cols-4 border-y-2 border-ink/85 divide-x divide-rule"
         >
-          <Stat accent figure={`${modeloIA.iaGana}/${modeloIA.conForecast}`} label="IA le gana al baseline" />
-          <Stat accent figure={`~${Math.round(modeloIA.mejoraMediaPct)}%`} label="Menos error vs baseline" />
+          {comp ? (
+            <>
+              <Stat
+                accent
+                figure={`−${Math.round(comp.ganador.mejoraVsBaselinePct)}%`}
+                label="Menos error que el baseline"
+              />
+              <Stat
+                figure={comp.ganador.etiqueta}
+                label={comp.gbmGana ? "Mejor modelo a 1 día" : "Mejor modelo — le gana al GBM"}
+              />
+            </>
+          ) : (
+            <>
+              <Stat figure={modeloIA.conForecast} label="Productos con pronóstico" />
+              <Stat figure="—" label="Comparación de modelos no disponible" />
+            </>
+          )}
           <Stat figure={snap.productCount} label={`Productos · ${snap.fechas.length} días`} />
           <Stat
             figure={
@@ -237,7 +285,7 @@ export default async function Home() {
         titulo="Comparar productos"
         bajada="Superpone la evolución de precio de varios productos a lo largo del tiempo."
       >
-        <Comparador productos={productosComparador} />
+        <Comparador productos={productosLigeros} />
       </Seccion>
 
       {/* ── ALERTAS ─────────────────────────────────────────────────── */}
@@ -267,11 +315,14 @@ export default async function Home() {
           mercado={snap.mercado}
           nProductos={snap.productos.length}
           nFechas={snap.productos[0]?.series.length ?? 0}
-          iaGana={modeloIA.iaGana}
-          conForecast={modeloIA.conForecast}
+          comparacion={comp}
         />
         <div data-guia="metodologia" className="mt-6 border-t border-rule pt-6">
-          <KillGateNote killGate={snap.forecastMeta?.kill_gate} modeloIA={modeloIA} />
+          <KillGateNote
+            killGate={snap.forecastMeta?.kill_gate}
+            modeloIA={modeloIA}
+            comparacion={comp}
+          />
         </div>
         {snap.verificacion && (
           <div className="mt-6 border-t border-rule pt-6">
@@ -282,7 +333,7 @@ export default async function Home() {
           <p className="text-sm text-muted">
             Descarga los precios de hoy o la serie histórica completa (CSV).
           </p>
-          <ExportCSV productos={snap.productos} />
+          <ExportCSV nProductos={snap.productos.length} />
         </div>
       </Seccion>
 

@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import time
 from typing import Protocol, runtime_checkable
 
@@ -62,6 +63,17 @@ LOCAL_MODEL = os.environ.get(
 # Reintentos de la API: backoff exponencial, visible y acotado.
 REINTENTOS = 4
 BACKOFF_BASE = 1.5
+# Reintentos ante 429 (cuota). Van aparte y son muchos más porque NO son un
+# fallo: el servidor dice cuánto esperar y esperar es la respuesta correcta.
+# Con backoff genérico de 1-2 s contra una ventana de cuota de 60 s, los cuatro
+# intentos se agotan sin haber esperado ni la décima parte de lo necesario.
+REINTENTOS_CUOTA = int(os.environ.get("EMBED_REINTENTOS_CUOTA", "40"))
+# Ritmo proactivo, en TEXTOS por minuto (0 = sin límite). Evita pedir de más y
+# comerse la cuota en un pico: es preferible ir al ritmo permitido que hacer
+# rebotar cada petición contra un 429.
+EMBED_RPM = int(os.environ.get("EMBED_RPM", "0"))
+# Margen sobre la espera que sugiere el servidor, para no volver justo al borde.
+MARGEN_CUOTA = 1.0
 
 
 def _embed_api_key() -> str | None:
@@ -211,31 +223,112 @@ class ApiEmbedder:
         self.modelo_nombre = modelo
         self.dims = dims
         self.firma = f"api:{modelo}:{dims}"
+        self._ultimo_envio = 0.0
+
+    def _verificar_dims(self, arr: np.ndarray) -> np.ndarray:
+        """El proveedor debe devolver EXACTAMENTE las dimensiones que se pidieron.
+
+        `dimensions` es un parámetro de OpenAI que no todos los proveedores
+        compatibles implementan; algunos lo IGNORAN en silencio y devuelven el
+        tamaño nativo del modelo. Eso sería veneno: `firma` diría
+        'api:<modelo>:256' —porque la firma se arma con lo pedido— mientras los
+        vectores tienen otro tamaño. El índice quedaría etiquetado con una
+        dimensión que no es la suya, el artefacto pesaría 10x lo previsto, y el
+        sitio validaría la firma como correcta.
+
+        Mejor romper acá, con el número real a la vista.
+        """
+        if arr.ndim == 2 and arr.shape[1] != self.dims:
+            raise RuntimeError(
+                f"El proveedor devolvió vectores de {arr.shape[1]} dimensiones y "
+                f"se pidieron {self.dims}: está ignorando el parámetro "
+                f"`dimensions`.\n"
+                f"Opciones: define EMBED_DIMS={arr.shape[1]} (ojo: el índice "
+                f"publicado crece en proporción), o usa un modelo/proveedor que "
+                f"respete `dimensions` (los text-embedding-3-* de OpenAI lo "
+                f"hacen).")
+        return arr
+
+    def _esperar_turno(self, n_textos: int) -> None:
+        """Espacia las peticiones para respetar EMBED_RPM (textos por minuto)."""
+        if EMBED_RPM <= 0:
+            return
+        minimo = 60.0 * n_textos / EMBED_RPM
+        transcurrido = time.monotonic() - self._ultimo_envio
+        if self._ultimo_envio and transcurrido < minimo:
+            time.sleep(minimo - transcurrido)
 
     def _pedir(self, lote: list[str]) -> np.ndarray:
         ultimo: Exception | None = None
-        for intento in range(REINTENTOS):
+        intentos_cuota = 0
+        intento = 0
+        while True:
+            self._esperar_turno(len(lote))
             try:
+                self._ultimo_envio = time.monotonic()
                 resp = self._cliente.embeddings.create(
                     model=self.modelo_nombre, input=lote, dimensions=self.dims)
-                return np.array([d.embedding for d in resp.data], dtype=np.float32)
+                return self._verificar_dims(
+                    np.array([d.embedding for d in resp.data], dtype=np.float32))
             except Exception as e:  # noqa: BLE001 - se reclasifica abajo
                 # Errores de configuración (auth, modelo inexistente, input
                 # inválido) no se arreglan reintentando: fallar rápido y claro.
                 if _es_error_permanente(e):
                     raise
                 ultimo = e
-                if intento < REINTENTOS - 1:
-                    time.sleep(BACKOFF_BASE ** intento)
+                if _es_cuota(e):
+                    recuperable, espera = _clasificar_cuota(e)
+                    if not recuperable:
+                        # Cuota agotada (o límite que el proveedor no explica).
+                        # Insistir no la devuelve; solo gasta tiempo contra una
+                        # pared. Se corta ya y se dice qué es.
+                        raise RuntimeError(
+                            "Cuota del proveedor de embeddings AGOTADA, o límite "
+                            "que no dice cuándo se libera.\n"
+                            "No se reintenta porque no hay nada que esperar. "
+                            "Opciones: bajar EMBED_LOTE y EMBED_RPM y retomar "
+                            "más tarde (la caché conserva lo hecho), habilitar "
+                            "facturación en el proveedor, o cambiar a uno con "
+                            f"cuota suficiente.\nDetalle: {e}") from e
+                    # Recuperable: el proveedor dice "todavía no". Se espera lo
+                    # que PIDE, o la ventana si solo dice que es por minuto.
+                    intentos_cuota += 1
+                    if intentos_cuota > REINTENTOS_CUOTA:
+                        break
+                    # Anunciar la espera: 40 esperas mudas de 30 s son 20 minutos
+                    # en los que el proceso parece colgado.
+                    print(f"  cuota: esperando {espera:.0f}s "
+                          f"({intentos_cuota}/{REINTENTOS_CUOTA})", flush=True)
+                    time.sleep(espera + MARGEN_CUOTA)
+                    continue
+                intento += 1
+                if intento >= REINTENTOS:
+                    break
+                time.sleep(BACKOFF_BASE ** (intento - 1))
+        detalle = (f"{REINTENTOS_CUOTA} esperas de cuota" if intentos_cuota
+                   else f"{REINTENTOS} intentos")
         raise RuntimeError(
-            f"El proveedor de embeddings falló tras {REINTENTOS} intentos: {ultimo}"
+            f"El proveedor de embeddings falló tras {detalle}: {ultimo}"
         ) from ultimo
 
     def embed_documentos(self, textos: list[str]) -> np.ndarray:
         if not textos:
             return np.zeros((0, self.dims), dtype=np.float32)
-        trozos = [self._pedir(textos[i:i + EMBED_LOTE])
-                  for i in range(0, len(textos), EMBED_LOTE)]
+        lotes = list(range(0, len(textos), EMBED_LOTE))
+        # Un backfill limitado por cuota dura más de una hora. Sin señal de vida
+        # es indistinguible de un proceso colgado, y quien lo mira lo mata.
+        verboso = len(lotes) > 5
+        t0 = time.monotonic()
+        trozos = []
+        for k, i in enumerate(lotes, start=1):
+            trozos.append(self._pedir(textos[i:i + EMBED_LOTE]))
+            if verboso:
+                hechos = min(i + EMBED_LOTE, len(textos))
+                transcurrido = time.monotonic() - t0
+                restante = transcurrido / hechos * (len(textos) - hechos)
+                print(f"  embeddings: {hechos:>6,}/{len(textos):,} "
+                      f"({100 * hechos / len(textos):5.1f}%) · lote {k}/{len(lotes)} · "
+                      f"faltan ~{restante / 60:.0f} min", flush=True)
         return _normalizar(np.vstack(trozos))
 
     def embed_consulta(self, texto: str) -> np.ndarray:
@@ -244,11 +337,92 @@ class ApiEmbedder:
 
 def _es_error_permanente(e: Exception) -> bool:
     """True si reintentar no puede ayudar (auth, request inválido, modelo malo)."""
-    codigo = getattr(e, "status_code", None) or getattr(e, "code", None)
+    codigo = _codigo_http(e)
     if isinstance(codigo, int):
         # 408 y 429 sí se reintentan; el resto de 4xx, no.
         return 400 <= codigo < 500 and codigo not in (408, 429)
     return False
+
+
+def _codigo_http(e: Exception) -> int | None:
+    codigo = getattr(e, "status_code", None) or getattr(e, "code", None)
+    return codigo if isinstance(codigo, int) else None
+
+
+def _es_cuota(e: Exception) -> bool:
+    return _codigo_http(e) == 429
+
+
+# Duración que se asume para una ventana de límite POR MINUTO cuando el
+# proveedor la anuncia pero no dice cuánto falta. 60 s cubre la ventana entera.
+VENTANA_MINUTO = 60.0
+
+# Un 429 puede ser dos cosas MUY distintas y no todos los proveedores lo dicen
+# igual. Lo que se ha observado:
+#   Gemini, límite por minuto : trae `RetryInfo` con `retryDelay: 34s`.
+#   Gemini, cuota diaria      : 429 pelado + "check your plan and billing details".
+#   Jina, límite por minuto   : sin metadatos, pero el TEXTO lo dice:
+#                               "Token rate limit exceeded: 100,452/100,000 tokens
+#                                per minute. Reduce batch sizes..."
+# De ahí que haya que mirar también el mensaje: una heurística basada solo en la
+# presencia de RetryInfo trataba el caso de Jina —perfectamente recuperable—
+# como cuota agotada, y abortaba un backfill que solo necesitaba esperar.
+_RE_POR_VENTANA = re.compile(
+    r"per[-\s]?minute|per[-\s]?second|por minuto|rate limit exceeded|"
+    r"requests? per|tokens per",
+    re.IGNORECASE)
+_RE_POR_DIA = re.compile(r"per[-\s]?day|perday|por d[ií]a|daily", re.IGNORECASE)
+
+
+def _clasificar_cuota(e: Exception) -> tuple[bool, float]:
+    """Un 429 -> (¿se puede reintentar?, cuántos segundos esperar).
+
+    El orden de las reglas es el orden de fiabilidad de la señal:
+      1. El servidor dice CUÁNDO. Es lo mejor que puede pasar; se le hace caso.
+      2. Dice "por día". No hay nada que esperar en esta corrida.
+      3. Dice "por minuto" / "rate limit". Ventana corta: se espera y se sigue.
+      4. No dice nada. Conservador: no insistir contra una pared desconocida.
+    """
+    resp = getattr(e, "response", None)
+    cabeceras = getattr(resp, "headers", None)
+    if cabeceras:
+        crudo = cabeceras.get("retry-after") or cabeceras.get("Retry-After")
+        if crudo:
+            try:
+                return True, float(crudo)
+            except (TypeError, ValueError):
+                pass
+    texto = str(e)
+    if re.search(r"retry in [\d.]+s|'retryDelay'", texto):
+        return True, _espera_sugerida(e)
+    if _RE_POR_DIA.search(texto):
+        return False, 0.0
+    if _RE_POR_VENTANA.search(texto):
+        return True, VENTANA_MINUTO
+    return False, 0.0
+
+
+def _espera_sugerida(e: Exception, por_defecto: float = 30.0) -> float:
+    """Segundos que el propio servidor pide esperar ante un 429.
+
+    Se lee de donde el proveedor la ponga: la cabecera `Retry-After`, el bloque
+    `RetryInfo` de Google, o el texto del mensaje ("Please retry in 34.07s").
+    Adivinar un backoff cuando la respuesta trae el número exacto es tirar
+    intentos: con 1-2 s contra una ventana de cuota de 60 s no se llega nunca.
+    """
+    resp = getattr(e, "response", None)
+    cabeceras = getattr(resp, "headers", None)
+    if cabeceras:
+        crudo = cabeceras.get("retry-after") or cabeceras.get("Retry-After")
+        if crudo:
+            try:
+                return float(crudo)
+            except (TypeError, ValueError):
+                pass
+    m = re.search(r"retry in ([\d.]+)s|'retryDelay':\s*'([\d.]+)s'", str(e))
+    if m:
+        return float(m.group(1) or m.group(2))
+    return por_defecto
 
 
 # --------------------------------------------------------------------------- #

@@ -74,8 +74,14 @@ services:
       AI_BASE_URL: ${AI_BASE_URL:-https://api.deepseek.com}
       AI_MODEL: ${AI_MODEL:-deepseek-chat}
       EMBED_API_KEY: ${EMBED_API_KEY:-}
+      EMBED_BASE_URL: ${EMBED_BASE_URL:-https://api.openai.com/v1}
       EMBED_MODEL: ${EMBED_MODEL:-text-embedding-3-small}
       EMBED_DIMS: ${EMBED_DIMS:-256}
+      # El sitio recupera vía la API del pipeline —la implementación de
+      # referencia— en vez del port de TypeScript. Aquí está a un salto de red,
+      # así que es el sitio natural para ejercitar ese camino.
+      PRECIOVIVO_API_URL: http://api:8000
+      PRECIOVIVO_API_KEY: ${PRECIOVIVO_API_KEYS:-dev-local}
     depends_on:
       - api
 
@@ -86,10 +92,17 @@ services:
       context: ./pipeline
     environment:
       EMBED_API_KEY: ${EMBED_API_KEY:-}
+      EMBED_BASE_URL: ${EMBED_BASE_URL:-https://api.openai.com/v1}
       EMBED_MODEL: ${EMBED_MODEL:-text-embedding-3-small}
       EMBED_DIMS: ${EMBED_DIMS:-256}
-      # Sin clave de API cae al embebedor local (model2vec). Ese índice sirve
-      # para la CLI pero NO para el sitio: Vercel no puede correr el modelo.
+      # Límites del PROVEEDOR, no del pipeline: Gemini rechaza lotes de más de
+      # 100 y su free tier va a ~100 embeddings/minuto. Con EMBED_RPM el
+      # backfill va al ritmo permitido en vez de rebotar contra 429.
+      EMBED_LOTE: ${EMBED_LOTE:-100}
+      EMBED_RPM: ${EMBED_RPM:-0}
+      # Sin clave de API el embebedor local (model2vec) construye el índice,
+      # pero PUBLICARLO está bloqueado: el sitio no puede correr ese modelo, así
+      # que la firma nunca coincidiría y la búsqueda vectorial quedaría apagada.
       PRECIOVIVO_EMBED_PROVIDER: ${PRECIOVIVO_EMBED_PROVIDER:-auto}
       PRECIOVIVO_RAG_WEB: /data
     volumes:

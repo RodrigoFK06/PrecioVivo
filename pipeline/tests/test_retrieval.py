@@ -380,3 +380,30 @@ def test_anomalia_llega_al_contexto_al_preguntar_por_ella(recuperador):
     c = recuperador.recuperar("¿hubo algo anómalo con el tomate?", k=10)
     assert any(x.tipo == TIPO_EVENTO_ANOMALIA and x.slug == "tomate"
                for x in c.chunks())
+
+
+# --------------------------------------------------------------------------- #
+# Producto que NO está en el catálogo
+# --------------------------------------------------------------------------- #
+def test_avisa_cuando_la_pregunta_no_nombra_ningun_producto(recuperador):
+    """Medido con un embebedor real: preguntar por un producto INEXISTENTE
+    recupera fichas de otro a coseno 0.644, contra 0.666 de una consulta
+    legítima. Dos centésimas — ningún umbral las separa, y uno que lo intentara
+    mataría las preguntas agregadas (0.515). No se arregla filtrando: se arregla
+    diciéndoselo al modelo, que es lo que este aviso hace.
+    """
+    # "mango" y no "papaya": el catálogo sintético SÍ trae Papaya, puesta ahí a
+    # propósito para comprobar que "papa" no la arrastra por prefijo.
+    ctx = recuperador.recuperar("¿cuánto cuesta el mango?", k=5)
+    assert not ctx.consulta.slugs, "mango no está en el catálogo sintético"
+    prompt = ctx.a_prompt()
+    assert "=== AVISO ===" in prompt
+    assert "no est" in prompt.lower() and "catálogo" in prompt.lower()
+
+
+def test_no_avisa_cuando_si_hay_producto(recuperador):
+    """El aviso solo aparece cuando de verdad no se identificó nada: si sale
+    siempre, el modelo aprende a ignorarlo."""
+    ctx = recuperador.recuperar("¿cuánto cuesta la papa blanca?", k=5)
+    assert ctx.consulta.slugs
+    assert "=== AVISO ===" not in ctx.a_prompt()

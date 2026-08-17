@@ -16,7 +16,24 @@ type Fila = {
 type Respuesta = {
   texto: string;
   productos: Fila[];
-  fuente?: "llm" | "fallback";
+  fuente?: "llm" | "llm-rag" | "llm-rag-lexico" | "fallback";
+};
+
+/**
+ * Qué se le dice al lector según con qué evidencia se respondió.
+ *
+ * Antes esto era un ternario sobre `fuente === "llm"`, y el tipo ni siquiera
+ * contemplaba `"llm-rag"`: toda respuesta con RAG caía al `else` y se anunciaba
+ * como "coincidencia de palabras clave", que es justo lo que NO era. Cada
+ * peldaño de la escalera de degradación dice ahora lo suyo.
+ */
+const NOTA_FUENTE: Record<NonNullable<Respuesta["fuente"]>, string> = {
+  "llm-rag":
+    "Interpretado con IA sobre la evidencia recuperada del histórico (serie del periodo, anomalías y ficha del producto).",
+  "llm-rag-lexico":
+    "Interpretado con IA sobre la evidencia recuperada del histórico por búsqueda de texto. La búsqueda semántica no estaba disponible en este momento, así que la respuesta puede recoger menos paráfrasis de lo habitual.",
+  llm: "Interpretado con IA sobre los precios de hoy, sin profundidad histórica.",
+  fallback: "Respuesta por coincidencia de palabras clave sobre el snapshot.",
 };
 
 const EJEMPLOS = ["¿Qué está más barato hoy?", "¿Qué subió de precio?", "maracuyá"];
@@ -150,10 +167,7 @@ export default function ConsultaBox() {
           )}
 
           <p className="mt-3 text-[11px] text-faint">
-            {resp.fuente === "llm"
-              ? "Interpretado con IA sobre el snapshot. Precios reales del mercado."
-              : "Respuesta por coincidencia de palabras clave sobre el snapshot."}{" "}
-            Referencial, no asesoría de compra.
+            {NOTA_FUENTE[resp.fuente ?? "fallback"]} Referencial, no asesoría de compra.
           </p>
         </div>
       )}

@@ -10,10 +10,13 @@ canonical Postgres schema; the SQLite DDL here mirrors it.
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
+from typing import Any
 
 GMML = ("GMML", "Gran Mercado Mayorista de Lima")
 
@@ -78,6 +81,117 @@ _PRONOSTICO_UPDATE = [c for c in _PRONOSTICO_COLS if c not in _PRONOSTICO_PK]
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+# --------------------------------------------------------------------------- #
+# Lectura dual-backend
+# --------------------------------------------------------------------------- #
+def _normalizar(v: Any) -> Any:
+    """Iguala los tipos que cada driver devuelve para la MISMA columna.
+
+    Postgres devuelve `date`/`datetime` para DATE/TIMESTAMP y puede devolver
+    `Decimal` para NUMERIC; SQLite devuelve `str` y `float`. Sin esto, el mismo
+    snapshot exportado desde uno u otro backend saldría con tipos distintos y el
+    sitio —que hace `pt["fecha"][5:7]` y compara fechas como cadenas— se rompería
+    solo en Postgres. La normalización es lo que hace que los dos caminos
+    produzcan un artefacto idéntico.
+    """
+    if isinstance(v, datetime):
+        return v.isoformat(timespec="seconds")
+    if isinstance(v, date):
+        return v.isoformat()
+    if isinstance(v, Decimal):
+        return float(v)
+    return v
+
+
+class LectorDatos:
+    """Conexión de SOLO LECTURA al backend vigente, con filas como `dict`.
+
+    POR QUÉ EXISTE
+    --------------
+    `Store` ya hablaba los dos backends, pero `export.build`, `ai._series_desde_db`
+    y el cross-check de `sisap` abrían `sqlite3.connect` directo. Con
+    `DATABASE_URL` seteada se podía INGERIR y PRONOSTICAR pero no EXPORTAR — y el
+    snapshot es la fuente única que leen el sitio, la API, el MCP, el agente y la
+    CLI. El camino a producción que documenta DEPLOY.md quedaba cortado justo ahí.
+
+    Uso: el SQL se escribe con `{ph}` y se formatea con `lector.ph`, igual que en
+    `Store`, porque el marcador de parámetro difiere entre drivers.
+
+        with LectorDatos() as lec:
+            filas = lec.filas(f"SELECT * FROM productos WHERE id = {lec.ph}", (1,))
+    """
+
+    def __init__(self, db_path: str | None = None, dsn: str | None = None):
+        self.dsn = dsn if dsn is not None else os.environ.get("DATABASE_URL")
+        self.is_pg = bool(self.dsn)
+        self.ph = "%s" if self.is_pg else "?"
+        if self.is_pg:
+            import psycopg  # lazy, igual que en Store
+
+            self._conn = psycopg.connect(self.dsn)
+            self.ruta = None
+            self.backend = "postgres"
+        else:
+            self.ruta = db_path or os.environ.get("PRECIOVIVO_DB", "../data/preciovivo.db")
+            self._conn = sqlite3.connect(self.ruta)
+            self._conn.row_factory = sqlite3.Row
+            self.backend = f"sqlite:{self.ruta}"
+
+    def filas(self, sql: str, params: tuple = ()) -> list[dict]:
+        if self.is_pg:
+            from psycopg.rows import dict_row
+
+            with self._conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql, params)
+                crudas = cur.fetchall()
+            return [{k: _normalizar(v) for k, v in f.items()} for f in crudas]
+        # `dict(fila)` y no `for k in fila`: iterar un `sqlite3.Row` devuelve los
+        # VALORES, no las claves.
+        return [{k: _normalizar(v) for k, v in dict(f).items()}
+                for f in self._conn.execute(sql, params).fetchall()]
+
+    def valor(self, sql: str, params: tuple = ()) -> Any:
+        """Primer campo de la primera fila, o None."""
+        fs = self.filas(sql, params)
+        if not fs:
+            return None
+        return next(iter(fs[0].values()))
+
+    def rollback(self) -> None:
+        """Deja la conexión reutilizable tras un error.
+
+        Importa en Postgres: una sentencia fallida aborta la transacción y toda
+        consulta posterior sobre la MISMA conexión falla con "current transaction
+        is aborted", aunque sea correcta. En las secciones aditivas del export
+        (que capturan y siguen) eso convertiría un fallo en cascada.
+        """
+        # Limpiar nunca debe ser lo que rompa: si el rollback falla, la conexión
+        # ya estaba perdida y el llamador está en su camino de degradación.
+        with contextlib.suppress(Exception):
+            self._conn.rollback()
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def __enter__(self) -> "LectorDatos":
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self.close()
+
+
+def hay_datos(db_path: str | None = None, dsn: str | None = None) -> bool:
+    """¿Se puede leer del backend vigente?
+
+    En SQLite eso significa que el archivo EXISTA: `sqlite3.connect` lo crearía
+    vacío, y una BD fantasma se vería igual que una BD sin datos.
+    """
+    if dsn if dsn is not None else os.environ.get("DATABASE_URL"):
+        return True
+    ruta = db_path or os.environ.get("PRECIOVIVO_DB", "../data/preciovivo.db")
+    return os.path.exists(ruta)
 
 
 class Store:

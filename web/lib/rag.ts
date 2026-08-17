@@ -167,6 +167,51 @@ export async function cargarIndice(): Promise<Indice | null> {
  * se embebe por HTTP, y consulta y corpus tienen que vivir en el mismo espacio
  * vectorial o el coseno compara cosas incomparables.
  */
+/**
+ * Espera máxima ante un 429 antes de rendirse, en milisegundos.
+ *
+ * Al otro lado hay una persona esperando una respuesta HTTP, así que la
+ * disciplina es la contraria a la del backfill: allí esperar 34 s es correcto,
+ * aquí sería una petición colgada. Se reintenta UNA vez si el proveedor pide una
+ * espera corta; si pide más, se degrada — y la degradación ahora se reporta,
+ * que es lo que la hace aceptable.
+ */
+const MAX_ESPERA_429_MS = 1500;
+
+function esperar(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Pide el embedding, con un reintento acotado ante 429.
+ *
+ * Hace falta porque los free tier tienen cuotas por minuto muy bajas (Gemini:
+ * 100 embeddings/min). Sin esto, una ráfaga de tráfico convierte cada consulta
+ * en una degradación silenciosa: `recuperar` captura el error, devuelve el piso
+ * y la respuesta sale igual.
+ */
+async function pedirEmbedding(q: string): Promise<Response> {
+  const enviar = () =>
+    fetch(`${EMBED_BASE_URL}/embeddings`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${EMBED_API_KEY}`,
+      },
+      body: JSON.stringify({ model: EMBED_MODEL, input: q, dimensions: EMBED_DIMS }),
+    });
+
+  const primera = await enviar();
+  if (primera.status !== 429) return primera;
+
+  const cabecera = primera.headers?.get?.("retry-after");
+  const esperaMs = cabecera ? Number(cabecera) * 1000 : MAX_ESPERA_429_MS;
+  if (!Number.isFinite(esperaMs) || esperaMs > MAX_ESPERA_429_MS) return primera;
+
+  await esperar(esperaMs);
+  return enviar();
+}
+
 export async function embedConsulta(q: string, firmaEsperada: string): Promise<Float32Array> {
   if (!EMBED_API_KEY) {
     throw new Error("Falta EMBED_API_KEY para embeber la consulta (AI_API_KEY es de DeepSeek, que no ofrece embeddings).");
@@ -179,14 +224,7 @@ export async function embedConsulta(q: string, firmaEsperada: string): Promise<F
     );
   }
 
-  const resp = await fetch(`${EMBED_BASE_URL}/embeddings`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${EMBED_API_KEY}`,
-    },
-    body: JSON.stringify({ model: EMBED_MODEL, input: q, dimensions: EMBED_DIMS }),
-  });
+  const resp = await pedirEmbedding(q);
   if (!resp.ok) {
     throw new Error(`El proveedor de embeddings respondió ${resp.status}`);
   }
@@ -229,6 +267,118 @@ export function buscar(idx: Indice, q: Float32Array, k: number, f?: Filtro): Res
   // vectorstore._ordenar_determinista para que el sitio no reordene distinto.
   res.sort((a, b) => b.score - a.score || (a.chunk.id < b.chunk.id ? -1 : 1));
   return res.slice(0, k);
+}
+
+// ---------------------------------------------------------------------------
+// BM25 (léxico)
+//
+// POR QUÉ AHORA SÍ ESTÁ EN EL SITIO
+// ---------------------------------
+// Estaba deliberadamente fuera: portar BM25 a TypeScript es una segunda
+// implementación de las mismas reglas, y dos implementaciones divergen. El plan
+// era que el sitio llamara a la API del pipeline en vez de copiarla.
+//
+// Lo que cambió el cálculo: el embebido de la CONSULTA depende de un proveedor
+// externo con cuota por minuto. Cuando esa cuota se agota —o el proveedor
+// falla— el sitio se quedaba solo con el piso determinista, sin ningún
+// recuperador. BM25 no depende de nadie: corre sobre el texto que ya viaja en
+// el deploy. Es la única pieza de recuperación que no se puede caer.
+//
+// La deriva se controla igual que el resto del port: `web/test/rag.test.ts`
+// espeja los casos de `pipeline/tests/test_retrieval.py`, con las mismas
+// constantes (k1, b, C de RRF) declaradas al lado de su equivalente en Python.
+// ---------------------------------------------------------------------------
+
+/** Espejan retrieval.BM25 (k1, b) y retrieval.RRF_C / CANDIDATOS. */
+const BM25_K1 = 1.5;
+const BM25_B = 0.75;
+const RRF_C = 60;
+const CANDIDATOS = 40;
+
+export type IndiceBM25 = {
+  /** token -> [(índice del chunk, frecuencia en ese chunk)] */
+  postings: Map<string, Array<[number, number]>>;
+  largos: number[];
+  largoMedio: number;
+  idf: Map<string, number>;
+};
+
+export function construirBM25(chunks: RagChunk[]): IndiceBM25 {
+  const postings = new Map<string, Array<[number, number]>>();
+  const largos: number[] = [];
+
+  for (let i = 0; i < chunks.length; i++) {
+    const tokens = tokenizar(chunks[i].texto);
+    largos.push(tokens.length);
+    const frec = new Map<string, number>();
+    for (const t of tokens) frec.set(t, (frec.get(t) ?? 0) + 1);
+    for (const [t, f] of frec) {
+      const lista = postings.get(t);
+      if (lista) lista.push([i, f]);
+      else postings.set(t, [[i, f]]);
+    }
+  }
+
+  const n = chunks.length;
+  const largoMedio = n ? largos.reduce((a, b) => a + b, 0) / n : 0;
+  const idf = new Map<string, number>();
+  for (const [t, post] of postings) {
+    idf.set(t, Math.log(1 + (n - post.length + 0.5) / (post.length + 0.5)));
+  }
+  return { postings, largos, largoMedio, idf };
+}
+
+/** Devuelve [(índice del chunk, score)] ordenado, top-k. Espeja BM25.buscar. */
+export function buscarBM25(
+  bm: IndiceBM25,
+  chunks: RagChunk[],
+  pregunta: string,
+  k: number,
+  permitidos?: Set<number>,
+): Array<[number, number]> {
+  const scores = new Map<number, number>();
+  for (const tok of new Set(tokenizar(pregunta))) {
+    const post = bm.postings.get(tok);
+    if (!post) continue;
+    const idf = bm.idf.get(tok)!;
+    for (const [i, f] of post) {
+      if (permitidos && !permitidos.has(i)) continue;
+      const norm =
+        1 - BM25_B + BM25_B * (bm.largoMedio ? bm.largos[i] / bm.largoMedio : 1);
+      const aporte = (idf * (f * (BM25_K1 + 1))) / (f + BM25_K1 * norm);
+      scores.set(i, (scores.get(i) ?? 0) + aporte);
+    }
+  }
+  // Desempate por id de chunk, igual que el vectorial: orden reproducible.
+  return [...scores.entries()]
+    .sort((a, b) => b[1] - a[1] || (chunks[a[0]].id < chunks[b[0]].id ? -1 : 1))
+    .slice(0, k);
+}
+
+/**
+ * Reciprocal Rank Fusion. Espeja retrieval.rrf.
+ *
+ * Combina rankings por POSICIÓN, así que no hay que calibrar dos escalas
+ * incomparables: BM25 no está acotado y el coseno vive en [-1, 1].
+ */
+export function rrf(listas: string[][], c = RRF_C): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const lista of listas) {
+    lista.forEach((id, i) => out.set(id, (out.get(id) ?? 0) + 1 / (c + i + 1)));
+  }
+  return out;
+}
+
+// El índice léxico se construye una vez por proceso, la primera vez que se
+// consulta. No va dentro de `cargarIndice` para no pagarlo en arranques que
+// nunca lleguen a preguntar nada.
+let cacheBM25: { para: Indice; bm: IndiceBM25 } | null = null;
+
+export function bm25De(idx: Indice): IndiceBM25 {
+  if (cacheBM25 && cacheBM25.para === idx) return cacheBM25.bm;
+  const bm = construirBM25(idx.chunks);
+  cacheBM25 = { para: idx, bm };
+  return bm;
 }
 
 // ---------------------------------------------------------------------------
@@ -425,7 +575,7 @@ export function detectarRangoFechas(
   return {};
 }
 
-/** Orquesta el parseo, el filtro, la búsqueda y el piso. */
+/** Orquesta el parseo, el filtro, la búsqueda híbrida y el piso. */
 export async function recuperar(
   pregunta: string,
   catalogo: Record<string, string>,
@@ -440,17 +590,46 @@ export async function recuperar(
   if (!idx) return { ...vacio, degradado: "no hay índice RAG publicado" };
 
   const base = piso(idx, slugs, desde, hasta);
+
+  // Pre-filtro estructurado, con la misma relajación que retrieval.recuperar:
+  // un filtro que no deja nada es peor que no filtrar, porque deja la pregunta
+  // sin contexto recuperado.
+  let filtro: Filtro | undefined = { slugs: slugs.size ? slugs : undefined, desde, hasta };
+  if (!idx.chunks.some((c) => acepta(c, filtro!))) filtro = undefined;
+
+  // 1) LÉXICO. Va primero y siempre: no depende de ningún proveedor externo,
+  //    así que es el recuperador que sobrevive a una cuota agotada.
+  const permitidos = filtro
+    ? new Set(idx.chunks.map((c, i) => (acepta(c, filtro!) ? i : -1)).filter((i) => i >= 0))
+    : undefined;
+  const lex = buscarBM25(bm25De(idx), idx.chunks, pregunta, CANDIDATOS, permitidos).map(
+    ([i]) => idx.chunks[i].id,
+  );
+
+  // 2) VECTORIAL. Aporta sinónimos y paráfrasis que el léxico pierde, pero
+  //    puede no estar disponible.
+  let vec: string[] = [];
+  let degradado: string | undefined;
   try {
     const q = await embedConsulta(pregunta, idx.firmaEmbedder);
-    let filtro: Filtro | undefined = { slugs: slugs.size ? slugs : undefined, desde, hasta };
-    // Un filtro que no deja nada dejaría la pregunta sin contexto: se relaja.
-    if (!idx.chunks.some((c) => acepta(c, filtro!))) filtro = undefined;
-    return { ...vacio, piso: base, recuperados: buscar(idx, q, k, filtro) };
+    vec = buscar(idx, q, CANDIDATOS, filtro).map((r) => r.chunk.id);
   } catch (e) {
-    // Sin embeddings el piso determinista IGUAL sirve: es la parte que no
-    // depende de un coseno. Se degrada, no se cae.
-    return { ...vacio, piso: base, degradado: e instanceof Error ? e.message : String(e) };
+    degradado = e instanceof Error ? e.message : String(e);
   }
+
+  // 3) FUSIÓN RRF. Con una sola lista degenera en ese ranking, que es
+  //    exactamente lo que se quiere cuando el vectorial no está.
+  const fusion = rrf(vec.length ? [lex, vec] : [lex]);
+  const porId = new Map(idx.chunks.map((c) => [c.id, c]));
+  const recuperados: ResultadoRag[] = [...fusion.entries()]
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+    .slice(0, k)
+    .flatMap(([id, score]) => {
+      const chunk = porId.get(id);
+      return chunk ? [{ chunk, score }] : [];
+    });
+
+  return { ...vacio, piso: base, recuperados, degradado };
 }
 
 // ---------------------------------------------------------------------------
@@ -458,6 +637,20 @@ export async function recuperar(
 // ---------------------------------------------------------------------------
 export function aPrompt(ctx: ContextoRag): string {
   const partes: string[] = [];
+  if (!ctx.slugs.size) {
+    // Espeja retrieval.Contexto.a_prompt. Ver ahí el porqué, con las medidas:
+    // una pregunta por un producto que NO está en el catálogo recupera fichas
+    // de otro a coseno casi idéntico al de una consulta legítima, y ningún
+    // umbral los separa. Se resuelve avisando al modelo, no filtrando.
+    partes.push(
+      "=== AVISO ===\n" +
+        "Ninguna palabra de la pregunta coincide con un producto del catálogo. " +
+        "Si preguntan por un producto concreto, NO está entre los que seguimos: " +
+        "dilo explícitamente y no respondas con el precio de otro producto por " +
+        "parecido. El contexto de abajo es lo más cercano que encontró la " +
+        "búsqueda, no una coincidencia.",
+    );
+  }
   if (ctx.piso.length) {
     const que = ctx.slugs.size
       ? "productos que menciona la pregunta"

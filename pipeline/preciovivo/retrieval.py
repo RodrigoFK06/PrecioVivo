@@ -407,6 +407,29 @@ class Contexto:
         describirle mal al modelo lo que está leyendo.
         """
         partes: list[str] = []
+        if not self.consulta.slugs:
+            # AVISO EXPLÍCITO DE QUE NO SE IDENTIFICÓ PRODUCTO.
+            #
+            # El filtro léxico ya lo sabe —con 72 nombres canónicos el match es
+            # confiable— pero esa información se perdía antes de llegar al
+            # modelo, y la búsqueda vectorial rellena el hueco con lo más
+            # parecido que encuentre. Medido con un embebedor real:
+            # "¿cuánto cuesta la papaya?" (que NO está en el catálogo) devuelve
+            # fichas de papa a coseno 0.644, contra 0.666 de una pregunta por
+            # papa de verdad. Dos centésimas: ningún umbral las separa, y uno
+            # que lo intentara mataría las preguntas agregadas (0.515).
+            #
+            # Así que no se arregla filtrando, se arregla DICIÉNDOLO. El modelo
+            # recibe fichas de papa junto al aviso de que ninguna corresponde a
+            # lo que se preguntó, y puede responder "no tenemos ese producto"
+            # en vez de dar el precio de otro.
+            partes.append(
+                "=== AVISO ===\n"
+                "Ninguna palabra de la pregunta coincide con un producto del "
+                "catálogo. Si preguntan por un producto concreto, NO está entre "
+                "los que seguimos: dilo explícitamente y no respondas con el "
+                "precio de otro producto por parecido. El contexto de abajo es "
+                "lo más cercano que encontró la búsqueda, no una coincidencia.")
         if self.piso:
             que = ("productos que menciona la pregunta" if self.consulta.slugs
                    else "resumen del mercado en las fechas relevantes")
@@ -449,11 +472,19 @@ class Recuperador:
         Cómodo para tests y para la CLI. En producción el índice se construye una
         vez con `ingest --index` y se carga ya hecho.
         """
+        from .indexer import embed_con_cache
+
         snap = cargar_snapshot(origen)
         chunks = build_corpus(snap, granularidad=granularidad)
         emb = embedder or get_embedder()
         idx = indice or NumpyIndex()
-        idx.construir(chunks, emb.embed_documentos([c.texto for c in chunks]),
+        # Vía la caché de embeddings: sin esto, cada corrida de las evaluaciones
+        # con un embebedor REAL re-embebía los ~9.200 chunks —1,5 M de tokens y
+        # veinte minutos— para reconstruir algo idéntico a lo que el backfill ya
+        # calculó. Medir la calidad semántica dejaba de ser gratis, y lo que no
+        # es gratis se mide poco. Con `FakeEmbedder` la caché no aplica (firma
+        # distinta) y todo sigue igual de instantáneo.
+        idx.construir(chunks, embed_con_cache(chunks, emb),
                       granularidad, emb.firma)
         catalogo = {p["slug"]: p["nombre"] for p in snap.get("productos") or []}
         return cls(chunks, idx, emb, catalogo, snap.get("latestFecha"))

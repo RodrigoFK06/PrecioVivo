@@ -52,7 +52,21 @@ jobs:
           # Si un test necesitara una clave, el CI sería un secreto más que
           # rotar y una excusa para que falle "por el entorno".
           PRECIOVIVO_EMBED_PROVIDER: fake
-        run: pytest -q
+        # Se excluye el guard del artefacto: corre en su propio paso, más abajo,
+        # para que un índice mal publicado no se lea como "un test roto".
+        run: pytest -q -m "not publicado"
+
+      - name: Integridad del índice publicado
+        # El modo de falla que este paso existe para atrapar es INVISIBLE: si el
+        # índice de web/data se construyó con otro embebedor, o le falta la parte
+        # histórica, `web/lib/rag.ts` captura el error, cae al piso determinista
+        # y responde igual, etiquetando la respuesta como 'llm-rag'. El sitio
+        # devuelve 200 con datos reales y sin recuperación vectorial.
+        #
+        # Ningún test unitario lo ve —el artefacto no es código— y el
+        # dead-man's-switch tampoco: vigila la frescura del DATO, no la
+        # integridad del ÍNDICE. Sin este paso, ya pasó una vez.
+        run: pytest -q -m publicado
 
   evaluaciones:
     name: Evaluaciones de IA

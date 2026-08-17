@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import sqlite3
 import unicodedata
 from datetime import datetime, timezone
 
@@ -29,23 +28,26 @@ def _round(x, n=4):
     return round(x, n) if isinstance(x, (int, float)) else None
 
 
-def _gmml_id(c) -> int | None:
+def _gmml_id(lec) -> int | None:
     """id del mercado GMML, o None si la tabla aún no lo tiene."""
-    row = c.execute("SELECT id FROM mercados WHERE codigo = 'GMML'").fetchone()
-    return row[0] if row else None
+    return lec.valor("SELECT id FROM mercados WHERE codigo = 'GMML'")
 
 
 def build(db_path: str = DB) -> dict:
-    c = sqlite3.connect(db_path)
-    c.row_factory = sqlite3.Row
+    # Lectura dual-backend: SQLite en dev, Postgres si hay DATABASE_URL. Antes
+    # esto era `sqlite3.connect` directo, así que con DATABASE_URL se podía
+    # ingerir pero no exportar — y el snapshot es la fuente de todo lo demás.
+    from .store import LectorDatos
+
+    c = LectorDatos(db_path)
     # El snapshot base es GMML (reporte-335 diario). Con multi-mercado en la BD
     # (boletín MMF2/frutas), filtrar por el mercado GMML mantiene la forma y los
     # números EXACTOS del contrato del dashboard; los demás mercados se exponen
     # aparte en snapshot.mercados (retro-compatible: el dashboard puede ignorarlo).
     gmml_id = _gmml_id(c)
-    where_g = "WHERE pd.mercado_id = ?" if gmml_id is not None else ""
+    where_g = f"WHERE pd.mercado_id = {c.ph}" if gmml_id is not None else ""
     args_g = (gmml_id,) if gmml_id is not None else ()
-    fechas = [r[0] for r in c.execute(
+    fechas = [r["fecha"] for r in c.filas(
         f"SELECT DISTINCT fecha FROM precios_diarios pd {where_g} ORDER BY fecha", args_g)]
     latest = fechas[-1] if fechas else None
 
@@ -56,7 +58,7 @@ def build(db_path: str = DB) -> dict:
            FROM precios_diarios pd JOIN productos p ON p.id = pd.producto_id
            {where_g}
            ORDER BY p.nombre_canonico, pd.fecha"""
-    for r in c.execute(q, args_g):
+    for r in c.filas(q, args_g):
         p = prods.setdefault(r["nombre"], {
             "nombre": r["nombre"], "slug": slugify(r["nombre"]),
             "categoria": r["categoria"], "unidad": r["unidad"],
@@ -179,8 +181,8 @@ def _build_facts(snapshot: dict, productos: list[dict]) -> dict:
 def _add_ia(snapshot: dict, productos: list[dict], db_path: str) -> None:
     """Adjunta snapshot.anomalias (z-score robusto) y snapshot.resumenIA.
 
-    detecta_anomalias recibe el snapshot ya construido (sin reabrir SQLite).
-    daily_summary degrada a fuente='fallback' sin ANTHROPIC_API_KEY. Si la capa
+    detecta_anomalias recibe el snapshot ya construido (sin reabrir la BD).
+    daily_summary degrada a fuente='fallback' sin AI_API_KEY. Si la capa
     falla, el snapshot base se conserva con anomalias=[] y un resumen vacío.
     """
     try:
@@ -204,17 +206,21 @@ def _add_mercados(snapshot: dict, c, gmml_id) -> None:
     `mercados` no existe o algo falla, degrada a [] sin romper el snapshot.
     """
     try:
-        rows = c.execute(
+        rows = c.filas(
             "SELECT m.codigo, m.nombre, p.nombre_canonico, pd.fecha, "
             "       pd.precio_hoy_kg, pd.precio_ayer_kg "
             "FROM precios_diarios pd "
             "JOIN productos p ON p.id = pd.producto_id "
             "JOIN mercados m ON m.id = pd.mercado_id "
-            + ("WHERE pd.mercado_id <> ? " if gmml_id is not None else "")
+            + (f"WHERE pd.mercado_id <> {c.ph} " if gmml_id is not None else "")
             + "ORDER BY m.codigo, pd.fecha, p.nombre_canonico",
             (gmml_id,) if gmml_id is not None else (),
-        ).fetchall()
-    except sqlite3.Error as e:  # tabla ausente u otra rareza -> aditivo vacío
+        )
+    except Exception as e:  # noqa: BLE001 - tabla ausente u otra rareza -> aditivo vacío
+        # Amplio a propósito: cada driver lanza su propia jerarquía de errores
+        # (sqlite3.Error vs psycopg.Error) y esta sección es ADITIVA — que falte
+        # no debe tumbar el snapshot base.
+        c.rollback()  # en Postgres, sin esto la conexión queda inutilizable
         snapshot["mercados"] = []
         snapshot["mercadosError"] = f"{type(e).__name__}: {e}"
         return

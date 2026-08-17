@@ -9,6 +9,7 @@ Cubre:
 """
 from __future__ import annotations
 
+import os
 from datetime import date
 
 import pytest
@@ -150,3 +151,98 @@ class TestBuild:
         assert snap["latestFecha"] is None
         assert snap["productos"] == []
         assert snap["productCount"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Paridad SQLite <-> Postgres
+#
+# `export.build` leía con `sqlite3.connect` directo mientras `Store` y
+# `forecast` ya hablaban los dos backends: con DATABASE_URL se podía INGERIR y
+# PRONOSTICAR pero no EXPORTAR, y el snapshot es la fuente de todo lo que leen
+# el sitio, la API, el MCP, el agente y la CLI. El camino a producción de
+# DEPLOY.md quedaba cortado justo ahí.
+#
+# La propiedad que importa no es "el export contra Postgres no revienta", sino
+# que produzca EL MISMO artefacto: si los tipos de fecha o los números difieren
+# entre backends, el sitio se rompe solo en producción. Por eso el test compara
+# los dos snapshots campo por campo.
+# --------------------------------------------------------------------------- #
+ESQUEMA_TEST = "preciovivo_export_test"
+
+
+def _dsn_en_esquema(dsn: str, esquema: str) -> str:
+    """DSN que apunta a un esquema propio, para no tocar las tablas reales.
+
+    Se usa `options=-c search_path=<esquema>` (parámetro de libpq) en vez de
+    truncar tablas: el test es entonces NO destructivo sobre la base de destino,
+    y el esquema entero se borra al terminar.
+    """
+    sep = "&" if "?" in dsn else "?"
+    return f"{dsn}{sep}options=-c%20search_path%3D{esquema}"
+
+
+def _poblar(store, make_row) -> None:
+    """Los mismos dos productos x dos fechas, en el backend que sea."""
+    f1, f2 = date(2026, 6, 21), date(2026, 6, 22)
+    store.upsert_precios(
+        f1,
+        [make_row("Papa Blanca", precio_hoy_unit=2.00, equiv_kg=1.0, masa_hoy=100.0),
+         make_row("Limón Sutil", precio_hoy_unit=4.00, equiv_kg=1.0, masa_hoy=20.0)],
+        FUENTE)
+    store.upsert_precios(
+        f2,
+        [make_row("Papa Blanca", precio_hoy_unit=2.50, precio_ayer_unit=2.00,
+                  equiv_kg=1.0, masa_hoy=110.0, tendencia="En Alza"),
+         make_row("Limón Sutil", precio_hoy_unit=3.60, precio_ayer_unit=4.00,
+                  equiv_kg=1.0, masa_hoy=18.0, tendencia="En Baja")],
+        FUENTE)
+
+
+@pytest.mark.skipif(not os.environ.get("DATABASE_URL"),
+                    reason="requiere un Postgres con el esquema (DATABASE_URL)")
+def test_export_en_postgres_da_el_mismo_snapshot_que_sqlite(tmp_path, make_row, monkeypatch):
+    import psycopg
+
+    from preciovivo.store import Store
+
+    dsn_base = os.environ["DATABASE_URL"]
+
+    # --- SQLite: la referencia -------------------------------------------
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("PRECIOVIVO_DB", str(tmp_path / "ref.db"))
+    st_lite = Store()
+    st_lite.init_schema()
+    _poblar(st_lite, make_row)
+    st_lite.close()
+    snap_lite = build(str(tmp_path / "ref.db"))
+
+    # --- Postgres: en un esquema propio y desechable ----------------------
+    with psycopg.connect(dsn_base, autocommit=True) as con:
+        con.execute(f"DROP SCHEMA IF EXISTS {ESQUEMA_TEST} CASCADE")
+        con.execute(f"CREATE SCHEMA {ESQUEMA_TEST}")
+
+    monkeypatch.setenv("DATABASE_URL", _dsn_en_esquema(dsn_base, ESQUEMA_TEST))
+    try:
+        st_pg = Store()
+        st_pg.init_schema()
+        _poblar(st_pg, make_row)
+        st_pg.close()
+        # `db_path` se ignora en Postgres, pero se pasa uno temporal para que los
+        # caches auxiliares (forecast, sisap) no toquen los del repo.
+        snap_pg = build(str(tmp_path / "pg-ignorado.db"))
+    finally:
+        monkeypatch.setenv("DATABASE_URL", dsn_base)
+        with psycopg.connect(dsn_base, autocommit=True) as con:
+            con.execute(f"DROP SCHEMA IF EXISTS {ESQUEMA_TEST} CASCADE")
+
+    # --- El artefacto tiene que ser el mismo ------------------------------
+    assert snap_pg["latestFecha"] == snap_lite["latestFecha"] == "2026-06-22"
+    assert snap_pg["fechas"] == snap_lite["fechas"] == ["2026-06-21", "2026-06-22"]
+    assert snap_pg["productCount"] == snap_lite["productCount"] == 2
+    # Comparación campo por campo: aquí es donde saltaría un `date` de Postgres
+    # colándose donde SQLite devuelve `str`, que es el fallo que rompería el
+    # sitio solo en producción.
+    assert snap_pg["productos"] == snap_lite["productos"]
+    for p in snap_pg["productos"]:
+        assert isinstance(p["latest"]["fecha"], str)
+        assert all(isinstance(pt["fecha"], str) for pt in p["series"])

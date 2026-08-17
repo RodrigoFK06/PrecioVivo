@@ -141,18 +141,57 @@ def snapshot_en_disco(tmp_path, snapshot_sintetico, monkeypatch):
 
     `service` cachea el snapshot por proceso, así que hay que invalidarlo en cada
     test: si no, el primero que corra fija los datos para todos los demás.
+
+    También se aísla el ARTEFACTO RAG. `Recuperador.desde_artefacto` resuelve su
+    destino contra `indexer.DESTINO_WEB`, que por defecto es `../web/data`: el
+    índice REAL del repositorio. Sin aislarlo, un test de la API pasa o falla
+    según qué índice esté commiteado — que es justo lo que un test no debe dejar
+    que decida el contenido del repo.
+
+    OJO: no basta `monkeypatch.setenv("PRECIOVIVO_RAG_WEB", ...)`. `DESTINO_WEB`
+    se evalúa UNA vez, al importar `indexer`, así que para cuando corre el test
+    la variable de entorno ya no se vuelve a leer. Hay que parchear el atributo
+    del módulo, que `desde_artefacto` sí resuelve en cada llamada (importa dentro
+    de la función).
     """
     import json
 
-    from preciovivo import service
+    from preciovivo import indexer, service
 
     ruta = tmp_path / "snapshot.json"
     ruta.write_text(json.dumps(snapshot_sintetico), encoding="utf-8")
     monkeypatch.setenv("PRECIOVIVO_EXPORT", str(ruta))
     monkeypatch.setattr(service, "SNAPSHOT", str(ruta))
+
+    destino_rag = tmp_path / "rag"
+    destino_rag.mkdir()
+    monkeypatch.setenv("PRECIOVIVO_RAG_WEB", str(destino_rag))
+    monkeypatch.setattr(indexer, "DESTINO_WEB", str(destino_rag))
+
     service.invalidar_cache()
     yield ruta
     service.invalidar_cache()
+
+
+@pytest.fixture(autouse=True)
+def cache_de_embeddings_aislada(tmp_path_factory, monkeypatch):
+    """Ningún test escribe en la caché de embeddings REAL.
+
+    `Recuperador.desde_snapshot` pasa por `indexer.embed_con_cache`, así que
+    cualquier test que construya un recuperador escribe caché. Con la ruta por
+    defecto, la suite —que usa `FakeEmbedder`— sobrescribía la caché del
+    proveedor real: pasó de verdad, y costó rehacer 9.206 embeddings ya
+    calculados.
+
+    `ruta_para_firma` ya lo hace imposible por construcción (un archivo por
+    embebedor). Esto es la segunda barrera: aunque alguien cambie ese esquema,
+    los tests siguen sin tocar `data/`. `autouse` porque la protección no debe
+    depender de que cada test se acuerde de pedirla.
+    """
+    from preciovivo import indexer
+
+    destino = tmp_path_factory.mktemp("embed_cache") / "embed_cache.npz"
+    monkeypatch.setattr(indexer, "RUTA_CACHE", str(destino))
 
 
 @pytest.fixture

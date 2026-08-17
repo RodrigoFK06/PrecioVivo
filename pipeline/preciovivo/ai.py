@@ -22,7 +22,6 @@ from __future__ import annotations
 import math
 import os
 import re
-import sqlite3
 import statistics
 from typing import Any
 
@@ -620,9 +619,15 @@ def _robust_z(serie: list[float], valor: float) -> float | None:
 
 
 def _series_desde_db(db_path: str) -> dict:
-    """Lee de SQLite las series por producto: precio_hoy_kg y masa_hoy ordenadas."""
-    c = sqlite3.connect(db_path)
-    c.row_factory = sqlite3.Row
+    """Series por producto (precio_hoy_kg y masa_hoy) desde el backend vigente.
+
+    Dual-backend vía `store.LectorDatos`: SQLite en dev, Postgres si hay
+    DATABASE_URL. Antes abría `sqlite3.connect` directo, lo que dejaba la
+    detección de anomalías atada a SQLite aunque el resto del pipeline ya
+    hablara Postgres.
+    """
+    from .store import LectorDatos
+
     out: dict[str, dict] = {}
     q = (
         "SELECT p.nombre_canonico AS nombre, pd.fecha, "
@@ -630,12 +635,12 @@ def _series_desde_db(db_path: str) -> dict:
         "FROM precios_diarios pd JOIN productos p ON p.id = pd.producto_id "
         "ORDER BY p.nombre_canonico, pd.fecha"
     )
-    for r in c.execute(q):
-        d = out.setdefault(r["nombre"], {"fechas": [], "precio": [], "masa": []})
-        d["fechas"].append(r["fecha"])
-        d["precio"].append(r["precio"])
-        d["masa"].append(r["masa"])
-    c.close()
+    with LectorDatos(db_path) as c:
+        for r in c.filas(q):
+            d = out.setdefault(r["nombre"], {"fechas": [], "precio": [], "masa": []})
+            d["fechas"].append(r["fecha"])
+            d["precio"].append(r["precio"])
+            d["masa"].append(r["masa"])
     return out
 
 
@@ -724,31 +729,42 @@ def _compact_json(obj: Any) -> str:
 # Demostración: fallback (sin clave) + detección de anomalías sobre la BD local
 # --------------------------------------------------------------------------- #
 def _demo_facts(db_path: str) -> dict:
-    """Arma 'facts' de muestra para el resumen del día desde la BD (solo demo)."""
-    c = sqlite3.connect(db_path)
-    c.row_factory = sqlite3.Row
-    fila = c.execute("SELECT MAX(fecha) AS f FROM precios_diarios").fetchone()
-    fecha = fila["f"] if fila else None
-    movers = []
-    if fecha:
-        q = (
-            "SELECT p.nombre_canonico AS nombre, pd.precio_hoy_kg AS hoy, "
-            "       pd.precio_ayer_kg AS ayer "
-            "FROM precios_diarios pd JOIN productos p ON p.id = pd.producto_id "
-            "WHERE pd.fecha = ? AND pd.precio_hoy_kg IS NOT NULL "
-            "      AND pd.precio_ayer_kg IS NOT NULL AND pd.precio_ayer_kg <> 0"
-        )
-        for r in c.execute(q, (fecha,)):
-            var = 100.0 * (r["hoy"] - r["ayer"]) / r["ayer"]
-            movers.append({"nombre": r["nombre"], "var_pct": round(var, 1),
-                           "precio_kg": r["hoy"]})
-        ingreso = c.execute(
-            "SELECT SUM(masa_hoy) AS t FROM precios_diarios WHERE fecha = ?", (fecha,)
-        ).fetchone()["t"]
-    else:
+    """Arma 'facts' de muestra para el resumen del día desde la BD (solo demo).
+
+    Dual-backend como el resto del módulo: era el último lector que abría
+    `sqlite3.connect` a pelo, así que `python -m preciovivo.ai` fallaba contra
+    Postgres aunque el pipeline entero ya lo hablara.
+    """
+    from .store import LectorDatos
+
+    # Filtra por GMML, igual que export.build. Sin el filtro, MAX(fecha) sobre
+    # toda la tabla devolvía el último día de AVES —que SISAP publica antes, y
+    # también los sábados— y el demo salía con cero movimientos: buscaba precios
+    # GMML en un día que el GMML no publicó.
+    gmml = "JOIN mercados m ON m.id = pd.mercado_id AND m.codigo = 'GMML'"
+
+    with LectorDatos(db_path) as c:
+        fecha = c.valor(f"SELECT MAX(pd.fecha) AS f FROM precios_diarios pd {gmml}")
+        movers = []
         ingreso = None
-    n_prod = c.execute("SELECT COUNT(*) FROM productos").fetchone()[0]
-    c.close()
+        if fecha:
+            q = (
+                "SELECT p.nombre_canonico AS nombre, pd.precio_hoy_kg AS hoy, "
+                "       pd.precio_ayer_kg AS ayer "
+                "FROM precios_diarios pd "
+                "JOIN productos p ON p.id = pd.producto_id "
+                f"{gmml} "
+                f"WHERE pd.fecha = {c.ph} AND pd.precio_hoy_kg IS NOT NULL "
+                "      AND pd.precio_ayer_kg IS NOT NULL AND pd.precio_ayer_kg <> 0"
+            )
+            for r in c.filas(q, (fecha,)):
+                var = 100.0 * (r["hoy"] - r["ayer"]) / r["ayer"]
+                movers.append({"nombre": r["nombre"], "var_pct": round(var, 1),
+                               "precio_kg": r["hoy"]})
+            ingreso = c.valor(
+                f"SELECT SUM(pd.masa_hoy) AS t FROM precios_diarios pd {gmml} "
+                f"WHERE pd.fecha = {c.ph}", (fecha,))
+        n_prod = c.valor("SELECT COUNT(*) AS n FROM productos")
 
     movers.sort(key=lambda m: m["var_pct"])
     subas = list(reversed(movers[-3:])) if movers else []
@@ -765,8 +781,11 @@ def _demo_facts(db_path: str) -> dict:
 
 def main():
     db = os.environ.get("PRECIOVIVO_DB", "../data/preciovivo.db")
-    tiene_clave = bool(os.environ.get("ANTHROPIC_API_KEY"))
-    print(f"== Precio Vivo · capa IA · DB={db} · ANTHROPIC_API_KEY={'sí' if tiene_clave else 'no'} ==\n")
+    # La clave que este módulo usa de verdad es AI_API_KEY (o DEEPSEEK_API_KEY);
+    # ver `_api_key`. Antes se reportaba ANTHROPIC_API_KEY, resto de una
+    # migración: el demo decía "sin clave" con la clave puesta, y al revés.
+    tiene_clave = bool(_api_key())
+    print(f"== Precio Vivo · capa IA · DB={db} · AI_API_KEY={'sí' if tiene_clave else 'no'} ==\n")
 
     facts = _demo_facts(db)
 

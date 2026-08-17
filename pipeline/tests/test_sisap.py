@@ -149,19 +149,40 @@ def test_build_check_premature():
     assert check["coinciden"] == 0
 
 
-def test_cross_check_matches_against_sqlite(tmp_path):
-    # Camino feliz offline: una BD mínima con el precio GMML del mismo día.
+def _db_minima(tmp_path, filas_precio, nombre="preciovivo.db") -> str:
+    """BD con el esquema REAL reducido: incluye `mercados`, que el cross-check
+    necesita para no mezclar GMML con AVES/MMF2.
+
+    `filas_precio`: [(fecha, nombre_producto, codigo_mercado, precio_hoy_kg)].
+    """
     import sqlite3
-    db = str(tmp_path / "preciovivo.db")
+
+    db = str(tmp_path / nombre)
     con = sqlite3.connect(db)
     con.executescript("""
-        CREATE TABLE productos (id INTEGER PRIMARY KEY, nombre_canonico TEXT);
-        CREATE TABLE precios_diarios (fecha TEXT, producto_id INTEGER, precio_hoy_kg REAL);
-        INSERT INTO productos VALUES (1, 'Papa Blanca');
-        INSERT INTO precios_diarios VALUES ('2026-07-06', 1, 1.48);
+        CREATE TABLE mercados (id INTEGER PRIMARY KEY, codigo TEXT UNIQUE, nombre TEXT);
+        CREATE TABLE productos (id INTEGER PRIMARY KEY, nombre_canonico TEXT UNIQUE);
+        CREATE TABLE precios_diarios (
+            fecha TEXT, mercado_id INTEGER, producto_id INTEGER, precio_hoy_kg REAL);
+        INSERT INTO mercados VALUES (1, 'GMML', 'Gran Mercado Mayorista de Lima');
+        INSERT INTO mercados VALUES (2, 'AVES', 'Mercado de Aves');
     """)
+    for fecha, producto, codigo, precio in filas_precio:
+        con.execute("INSERT OR IGNORE INTO productos (nombre_canonico) VALUES (?)",
+                    (producto,))
+        con.execute(
+            "INSERT INTO precios_diarios (fecha, mercado_id, producto_id, precio_hoy_kg) "
+            "SELECT ?, m.id, p.id, ? FROM mercados m, productos p "
+            "WHERE m.codigo = ? AND p.nombre_canonico = ?",
+            (fecha, precio, codigo, producto))
     con.commit()
     con.close()
+    return db
+
+
+def test_cross_check_matches_against_sqlite(tmp_path):
+    # Camino feliz: el 335 del MISMO día ya está en la BD -> se usa 'Precio Hoy'.
+    db = _db_minima(tmp_path, [("2026-07-06", "Papa Blanca", "GMML", 1.48)])
 
     filas = [{"mercado": sisap.GMML_LABEL, "producto": "PAPA BLANCA",
               "precio_hoy_kg": 1.50, "precio_ayer_kg": 1.45, "prom_mes": None,
@@ -171,6 +192,62 @@ def test_cross_check_matches_against_sqlite(tmp_path):
     c = cc[0]
     assert c["gmml_kg"] == 1.48 and c["flag"] is False
     assert abs(c["delta_pct"] - 1.35) < 0.01
+    assert c["columna_sisap"] == "precio_hoy_kg"
+    assert c["fecha"] == "2026-07-06"
+
+
+def test_cross_check_ignora_otros_mercados(tmp_path):
+    """El contraste es contra GMML, no contra cualquier mercado de la tabla.
+
+    Sin el filtro por mercado, un producto con el mismo nombre en AVES se
+    contrastaría contra el precio equivocado y el delta sería inventado.
+    """
+    db = _db_minima(tmp_path, [
+        ("2026-07-06", "Papa Blanca", "GMML", 1.48),
+        # Mismo día, mismo nombre, otro mercado y otro precio: es el señuelo.
+        ("2026-07-06", "Pollo Vivo", "AVES", 7.90),
+    ])
+    filas = [{"mercado": sisap.GMML_LABEL, "producto": "POLLO VIVO",
+              "precio_hoy_kg": 7.90, "precio_ayer_kg": 7.80, "prom_mes": None,
+              "prom_7d": None, "fecha": date(2026, 7, 6)}]
+    cc = sisap.cross_check(filas, db_path=db)
+    assert len(cc) == 1
+    # El precio de AVES NO debe usarse como contraparte GMML, aunque coincidiría.
+    assert cc[0]["gmml_kg"] is None
+    assert cc[0]["flag"] is True
+
+
+def test_cross_check_usa_precio_ayer_cuando_no_hay_335_del_dia(tmp_path):
+    """El caso REAL de todos los días: SISAP va por delante del reporte-335.
+
+    SISAP publica ~06:30 y también publica sábados; el 335 sale después y no
+    existe los fines de semana. Contrastar su 'Precio Hoy' contra nuestra BD en
+    la fecha de SISAP daba cero contrapartes SIEMPRE (observado: SISAP del
+    sábado 2026-08-15 contra un último 335 del viernes 14 -> 0/12 y
+    `vigente=false`). SISAP trae 'Precio Ayer', que describe exactamente ese
+    viernes: contra ese día sí es una comparación del mismo hecho.
+    """
+    db = _db_minima(tmp_path, [("2026-08-14", "Zanahoria", "GMML", 0.87)])
+
+    filas = [{"mercado": sisap.GMML_LABEL, "producto": "ZANAHORIA",
+              # 'hoy' del sábado, que nuestra serie no tiene y no debe usarse...
+              "precio_hoy_kg": 0.95,
+              # ...y 'ayer', que es el viernes que sí tenemos.
+              "precio_ayer_kg": 0.87,
+              "prom_mes": None, "prom_7d": None, "fecha": date(2026, 8, 15)}]
+    cc = sisap.cross_check(filas, db_path=db)
+    assert len(cc) == 1
+    c = cc[0]
+    assert c["columna_sisap"] == "precio_ayer_kg"
+    assert c["sisap_kg"] == 0.87          # la columna 'ayer', no 0.95
+    assert c["fecha"] == "2026-08-14"     # el día GMML contrastado
+    assert c["fecha_sisap"] == "2026-08-15"
+    assert c["gmml_kg"] == 0.87 and c["flag"] is False
+
+    check = sisap.build_check(cc)
+    assert check["gmml_disponible"] is True
+    assert check["fecha"] == "2026-08-14"
+    assert "Precio Ayer" in check["base"]
 
 
 def test_save_and_load_check_roundtrip(tmp_path):

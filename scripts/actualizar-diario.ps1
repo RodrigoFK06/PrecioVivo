@@ -13,6 +13,12 @@ $env:PYTHONIOENCODING = "utf-8"
 Push-Location (Join-Path $root "pipeline")
 try {
     & $py -m preciovivo.ingest --latest 5    # nuevos dias habiles (idempotente)
+    # --sisap va DESPUES de --latest a proposito, pero ese orden no basta y no es
+    # donde estaba el problema: SISAP publica ~06:30 y tambien los sabados,
+    # mientras que el GMML no publica fines de semana, asi que la fecha de SISAP
+    # va por delante de nuestro ultimo 335 pase lo que pase. El contraste se
+    # resuelve en sisap._resolver_objetivo, que usa la columna "Precio Ayer" de
+    # SISAP contra nuestro ultimo dia GMML: ambas describen la misma jornada.
     & $py -m preciovivo.ingest --sisap       # pollo vivo (AVES) + cross-check GMML (no bloquea)
     & $py -m preciovivo.ingest --forecast    # recalcula pronosticos (~14 min) + cachea
     & $py -m preciovivo.export               # escribe ../web/data/snapshot.json

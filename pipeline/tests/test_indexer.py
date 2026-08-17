@@ -7,6 +7,8 @@ sitio ordena sea lo mismo que ordena el pipeline.
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -196,6 +198,43 @@ def test_se_niega_a_publicar_un_indice_de_juguete(tmp_path, construido,
     assert not list(tmp_path.iterdir()), "no debió escribir nada"
 
 
+def test_se_niega_a_publicar_un_indice_local(tmp_path, construido, snapshot_sintetico):
+    """Publicar un índice `local:` apaga la recuperación vectorial EN SILENCIO.
+
+    `web/lib/rag.ts` embebe la consulta con `api:<modelo>:<dims>` por HTTP —Vercel
+    no puede correr model2vec—, así que la firma nunca coincide; `recuperar()`
+    captura el error y devuelve solo el piso determinista, y como el piso trae
+    chunks la respuesta se sirve igual etiquetada 'llm-rag'.
+
+    Esto era un `print` de aviso y se publicó igual: el índice del repo llevaba
+    firma `local:` y el sitio estuvo sin búsqueda vectorial. Un aviso que se
+    puede ignorar no es un control; ahora aborta.
+    """
+    idx, chunks, vectores, _ = construido
+    meta_local = replace(idx.meta, firma_embedder="local:minishlab/potion:256")
+
+    with pytest.raises(RuntimeError, match="SIN recuperación vectorial"):
+        I.exportar_estatico(chunks, vectores, meta_local, snapshot_sintetico,
+                            destino=tmp_path)
+    assert not list(tmp_path.iterdir()), "no debió escribir nada"
+
+
+def test_el_bloqueo_local_tiene_una_salida_explicita(tmp_path, construido,
+                                                     snapshot_sintetico):
+    """Se puede publicar un índice local a propósito, pero hay que pedirlo.
+
+    Mismo patrón que PRECIOVIVO_API_ABIERTA: el default falla cerrado y abrirlo
+    es un acto explícito y auditable, no un efecto secundario.
+    """
+    idx, chunks, vectores, _ = construido
+    meta_local = replace(idx.meta, firma_embedder="local:minishlab/potion:256")
+
+    info = I.exportar_estatico(chunks, vectores, meta_local, snapshot_sintetico,
+                               destino=tmp_path, permitir_local=True)
+    assert info["n_historico"] + info["n_reciente"] == len(chunks)
+    assert (tmp_path / "rag-reciente.bin").exists()
+
+
 def test_cargar_sin_artefacto(tmp_path):
     chunks, vecs, metas = I.cargar_estatico(tmp_path)
     assert chunks == [] and metas == {}
@@ -252,3 +291,130 @@ def test_sin_indice_publicado_el_error_dice_como_arreglarlo(tmp_path,
     with pytest.raises(RuntimeError, match="--index"):
         Recuperador.desde_artefacto(snapshot_sintetico, destino=str(tmp_path),
                                     embedder=embedder_fake)
+
+
+# --------------------------------------------------------------------------- #
+# Caché de embeddings
+# --------------------------------------------------------------------------- #
+class _EmbedderContador:
+    """Envuelve un embebedor y cuenta cuántos textos se embeben de verdad."""
+
+    def __init__(self, base):
+        self._base = base
+        self.firma = base.firma
+        self.dims = base.dims
+        self.textos = 0
+
+    def embed_documentos(self, textos):
+        self.textos += len(textos)
+        return self._base.embed_documentos(textos)
+
+    def embed_consulta(self, texto):
+        return self._base.embed_consulta(texto)
+
+
+def _chunks_de_prueba(n=5, textos=None):
+    from preciovivo.corpus import Chunk
+
+    return [
+        Chunk(id=f"producto-periodo:x:{i}", tipo="producto-periodo",
+              texto=(textos[i] if textos else f"texto numero {i}"),
+              slug="x", producto="X", mercado="M",
+              fecha_inicio="2026-01-05", fecha_fin="2026-01-09")
+        for i in range(n)
+    ]
+
+
+def test_cache_de_embeddings_evita_recalcular(tmp_path, embedder_fake):
+    """El backfill completo son ~9.200 llamadas; con un free tier limitado por
+    cuota eso es más de hora y media. Sin caché, una interrupción a los 80
+    minutos costaba los 80 minutos — y ocurrió."""
+    emb = _EmbedderContador(embedder_fake)
+    chunks = _chunks_de_prueba()
+    ruta = tmp_path / "embed_cache.npz"
+
+    v1 = I.embed_con_cache(chunks, emb, ruta)
+    assert emb.textos == len(chunks)
+    # El archivo real lleva la firma en el nombre: un embebedor, una caché.
+    real = I.ruta_para_firma(ruta, emb.firma)
+    assert real.exists() and real.stat().st_size > 0, "la caché debe persistirse"
+
+    v2 = I.embed_con_cache(chunks, emb, ruta)
+    assert emb.textos == len(chunks), "la segunda pasada no debe embeber nada"
+    assert np.array_equal(v1, v2)
+
+
+def test_cache_se_invalida_cuando_cambia_el_TEXTO(tmp_path, embedder_fake):
+    """Los ids de chunk son estables por diseño, así que la semana en curso
+    conserva su id al recibir un día más. Cachear solo por id serviría el vector
+    viejo para el texto nuevo, en silencio y para siempre."""
+    emb = _EmbedderContador(embedder_fake)
+    ruta = tmp_path / "embed_cache.npz"
+
+    v1 = I.embed_con_cache(_chunks_de_prueba(), emb, ruta)
+    base = emb.textos
+
+    textos = [f"texto numero {i}" for i in range(5)]
+    textos[2] = "MISMO id, texto distinto"
+    v2 = I.embed_con_cache(_chunks_de_prueba(textos=textos), emb, ruta)
+
+    assert emb.textos - base == 1, "solo el chunk cambiado se re-embebe"
+    assert not np.array_equal(v2[2], v1[2]), "el vector del chunk cambiado es nuevo"
+    assert np.array_equal(v2[0], v1[0]), "los demás salen de la caché"
+
+
+def test_cache_no_cruza_embebedores(tmp_path, embedder_fake):
+    """Vectores de otro modelo viven en otro espacio: la firma invalida la
+    caché entera en vez de mezclarlos."""
+    ruta = tmp_path / "embed_cache.npz"
+    I.embed_con_cache(_chunks_de_prueba(), embedder_fake, ruta)
+
+    assert I.leer_cache(ruta, embedder_fake.firma), "misma firma: se reusa"
+    assert I.leer_cache(ruta, "api:otro-modelo:256") == {}, "otra firma: se descarta"
+
+
+def test_cache_corrupta_no_tumba_la_construccion(tmp_path, embedder_fake):
+    ruta = tmp_path / "embed_cache.npz"
+    ruta.write_bytes(b"esto no es un npz")
+    v = I.embed_con_cache(_chunks_de_prueba(), embedder_fake, ruta)
+    assert v.shape[0] == 5, "una caché ilegible se descarta, no se propaga"
+
+
+def test_cada_embebedor_tiene_su_propio_archivo_de_cache(tmp_path, embedder_fake):
+    """Un archivo por firma. Con uno compartido, el último en escribir borraba
+    lo del anterior — `leer_cache` descartaba por firma (correcto) pero
+    `guardar_cache` sobrescribía igual.
+
+    No es hipotético: al conectar `desde_snapshot` a la caché, la suite de tests
+    (FakeEmbedder) borró los 9.206 embeddings recién calculados con el proveedor
+    real. Separar por firma lo hace imposible por construcción.
+    """
+    base = tmp_path / "embed_cache.npz"
+    chunks = _chunks_de_prueba()
+
+    I.embed_con_cache(chunks, embedder_fake, base)
+    assert len(I.leer_cache(base, embedder_fake.firma)) == len(chunks)
+
+    # Otro embebedor, mismo `base`: no puede pisar al primero.
+    class _Otro:
+        firma = "api:modelo-real:256"
+        dims = 64
+
+        def embed_documentos(self, textos):
+            return embedder_fake.embed_documentos(textos)
+
+    I.embed_con_cache(chunks, _Otro(), base)
+
+    assert len(I.leer_cache(base, embedder_fake.firma)) == len(chunks), (
+        "la caché del primer embebedor debe sobrevivir")
+    assert len(I.leer_cache(base, "api:modelo-real:256")) == len(chunks)
+
+    escritos = sorted(p.name for p in tmp_path.glob("embed_cache*.npz"))
+    assert len(escritos) == 2, f"se esperaban dos archivos distintos: {escritos}"
+
+
+def test_la_ruta_de_cache_es_un_nombre_de_archivo_valido():
+    """La firma lleva ':' y '/', que no valen en un nombre de archivo."""
+    r = I.ruta_para_firma("/tmp/embed_cache.npz", "local:minishlab/potion-x:256")
+    assert ":" not in r.name and "/" not in r.name
+    assert r.suffix == ".npz" and r.parent.name == "tmp"

@@ -1,34 +1,53 @@
-import type { KillGate } from "@/lib/data";
+import type { ComparacionHonesta, KillGate } from "@/lib/data";
 import { pct } from "@/lib/format";
 
-/** Resumen del modelo de IA frente al baseline (derivado de los forecasts por producto). */
+/**
+ * Resumen DESCRIPTIVO de la capa de pronóstico. No afirma superioridad:
+ * `porMetodo` dice qué método quedó elegido en cada producto, que es un hecho
+ * sobre la selección, no sobre la capacidad. La afirmación de capacidad vive en
+ * `ComparacionHonesta`.
+ */
 export type ModeloIAResumen = {
   /** Productos con pronóstico evaluable. */
   conForecast: number;
-  /** Cuántos productos predice un modelo de IA (GBM) que además le gana al baseline. */
-  iaGana: number;
-  /** Mejora media (% menos error) sobre esos productos. */
-  mejoraMediaPct: number;
+  /** Cuántos productos eligieron cada método (gbm, media_tendencia, …). */
+  porMetodo: Record<string, number>;
 };
 
 type Props = {
   killGate?: KillGate;
   modeloIA?: ModeloIAResumen;
+  comparacion?: ComparacionHonesta | null;
+};
+
+const NOMBRE_METODO: Record<string, string> = {
+  gbm: "GBM",
+  media_tendencia: "media + tendencia",
+  seasonal_naive: "seasonal naive",
+  naive: "naive",
+  sin_datos: "sin datos",
 };
 
 /**
- * "Predicción con IA: qué funciona y qué no" — la nota cuenta DOS cosas distintas,
- * sin confundirlas:
+ * "Predicción con IA: qué funciona y qué no" — tres cosas distintas, sin
+ * confundirlas:
  *
- *   (a) EL LOGRO — el modelo de IA (GBM) ya le GANA al baseline ingenuo en la
- *       mayoría de productos (X de N), con ~Y% menos error, validado walk-forward.
- *   (b) EL KILL-GATE HONESTO — añadir el VOLUMEN de ingreso específicamente NO
- *       mejora la predicción sobre usar el precio. Lo decimos en vez de fingirlo.
+ *   (a) QUÉ MODELO GANA — comparación por familia, cada una evaluada por
+ *       separado sobre el mismo conjunto de productos. Es la única cifra sin
+ *       sesgo de selección, y hoy dice que una recta AR(1) le gana al GBM.
+ *   (b) QUÉ NO APORTA — el volumen de ingreso rezagado no mejora sobre el
+ *       precio. Lo decimos en vez de fingirlo.
+ *   (c) QUÉ NO SIGNIFICA NADA — que el método elegido por producto "le gane" a
+ *       su baseline, porque se eligió justamente por eso.
  *
- * No es lo mismo: el modelo gana (sí); el volumen no aporta (no). Ambos honestos.
+ * El bloque (a) reemplaza a una afirmación anterior ("el modelo le gana al
+ * baseline en X de N productos, ~Y% menos error") que era tautológica: contaba
+ * productos donde `metodo === "gbm" && mae_modelo < mae_baseline`, y
+ * `forecast_producto` elige `metodo` como el argmin del MAE sobre un conjunto
+ * que ya incluye al baseline. Se cumplía en el 100% de los productos.
  */
-export default function KillGateNote({ killGate, modeloIA }: Props) {
-  if (!killGate && !modeloIA) return null;
+export default function KillGateNote({ killGate, modeloIA, comparacion }: Props) {
+  if (!killGate && !modeloIA && !comparacion) return null;
 
   return (
     <div className="rounded-sm border border-rule bg-card p-5 sm:p-6">
@@ -40,28 +59,74 @@ export default function KillGateNote({ killGate, modeloIA }: Props) {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        {/* (a) EL LOGRO: el modelo de IA le gana al baseline. */}
-        {modeloIA && modeloIA.iaGana > 0 && (
+        {/* (a) QUÉ MODELO GANA — comparación sin sesgo de selección. */}
+        {comparacion && (
           <div className="rounded-sm border border-down/30 bg-down/[0.06] p-4">
             <div className="flex items-center gap-2">
               <span className="text-[11px] uppercase tracking-wide font-semibold text-down">
-                Funciona
+                Qué gana
               </span>
-              <span className="text-xs text-down">el modelo de IA le gana al baseline</span>
+              <span className="text-xs text-down">
+                {comparacion.gbmGana
+                  ? "el modelo complejo es además el mejor"
+                  : "el modelo simple le gana al complejo"}
+              </span>
             </div>
+
             <p className="mt-2 text-[15px] leading-relaxed text-ink">
-              Un modelo de IA (<span className="font-medium">GBM</span> con lags de precio,
-              calendario y feriados) ya le gana al baseline ingenuo en{" "}
+              Cada familia de modelo se evaluó por separado sobre los mismos{" "}
+              <span className="tabular-nums">{comparacion.nProductos}</span> productos,
+              walk-forward y sin mirar el futuro. Gana{" "}
+              <span className="font-semibold text-down">{comparacion.ganador.etiqueta}</span> —{" "}
+              {comparacion.ganador.descripcion} — con{" "}
               <span className="font-semibold text-down tabular-nums">
-                {modeloIA.iaGana} de {modeloIA.conForecast}
+                {Math.round(comparacion.ganador.mejoraVsBaselinePct)}% menos error
               </span>{" "}
-              productos, con{" "}
-              <span className="font-semibold text-down tabular-nums">
-                {Math.round(modeloIA.mejoraMediaPct)}% menos error
-              </span>{" "}
-              en promedio. Validado walk-forward (sin mirar el futuro). La predicción con IA ya{" "}
-              <span className="font-medium text-ink">funciona</span> para la mayoría — no es 100%
-              y lo seguimos mejorando.
+              que el baseline.
+              {!comparacion.gbmGana && comparacion.gbm && (
+                <>
+                  {" "}
+                  El <span className="font-medium">GBM</span>, que es el modelo más complejo que
+                  entrenamos, queda por detrás (
+                  <span className="tabular-nums">{comparacion.gbm.mae.toFixed(4)}</span> contra{" "}
+                  <span className="tabular-nums">{comparacion.ganador.mae.toFixed(4)}</span>). Con
+                  esta cantidad de historia, la complejidad todavía no se paga.
+                </>
+              )}
+            </p>
+
+            <table className="mt-3 w-full text-sm">
+              <thead>
+                <tr className="text-[10px] uppercase tracking-wide text-faint">
+                  <th className="text-left font-normal pb-1">Familia</th>
+                  <th className="text-right font-normal pb-1">MAE</th>
+                  <th className="text-right font-normal pb-1">vs baseline</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-rule">
+                {comparacion.familias.map((f) => (
+                  <tr key={f.clave} className={f.clave === comparacion.ganador.clave ? "text-ink" : "text-muted"}>
+                    <td className="py-1">
+                      {f.clave === comparacion.ganador.clave ? (
+                        <span className="font-semibold">{f.etiqueta}</span>
+                      ) : (
+                        f.etiqueta
+                      )}
+                    </td>
+                    <td className="py-1 text-right tabular-nums">{f.mae.toFixed(4)}</td>
+                    <td
+                      className={`py-1 text-right tabular-nums ${
+                        f.mejoraVsBaselinePct > 0 ? "text-down" : "text-faint"
+                      }`}
+                    >
+                      {f.clave === "baseline" ? "—" : pct(f.mejoraVsBaselinePct)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="mt-2 text-[11px] text-faint leading-relaxed">
+              MAE en S/ por kg, horizonte {comparacion.horizonte} día hábil. Menos es mejor.
             </p>
           </div>
         )}
@@ -81,8 +146,8 @@ export default function KillGateNote({ killGate, modeloIA }: Props) {
               <span className="font-medium text-ink">
                 {killGate.volume_helps ? "sí mejora" : "no le gana"}
               </span>{" "}
-              a usar solo señales de precio. Lo decimos en vez de fingirlo: el modelo de IA se queda
-              con precio + calendario, no con volumen.
+              a usar solo señales de precio. Lo decimos en vez de fingirlo: el modelo se queda con
+              precio + calendario, no con volumen.
             </p>
 
             <div className="mt-3 grid grid-cols-3 gap-2">
@@ -113,11 +178,24 @@ export default function KillGateNote({ killGate, modeloIA }: Props) {
         )}
       </div>
 
-      <p className="mt-4 text-xs text-muted leading-relaxed">
-        <span className="font-medium text-ink">El marco, sin trucos:</span> el modelo de IA le
-        gana al baseline (sí); el volumen específicamente no aporta (no). Ambos resultados son honestos
-        y todas las cifras (MAE, intervalos, nº de productos) son reales y reproducibles.
-      </p>
+      {/* (c) Qué método quedó elegido — descriptivo, con su advertencia. */}
+      {modeloIA && Object.keys(modeloIA.porMetodo).length > 0 && (
+        <p className="mt-4 text-xs text-muted leading-relaxed">
+          <span className="font-medium text-ink">Qué método usa cada producto:</span>{" "}
+          {Object.entries(modeloIA.porMetodo)
+            .sort((a, b) => b[1] - a[1])
+            .map(([m, n]) => `${NOMBRE_METODO[m] ?? m} en ${n}`)
+            .join(", ")}{" "}
+          de {modeloIA.conForecast}. Se elige por producto, quedándose con el de menor error
+          walk-forward.{" "}
+          <span className="text-faint">
+            Ojo con leer esto como una victoria: el método se elige comparándolo contra el baseline,
+            así que el elegido siempre le gana. Por eso la cifra que publicamos arriba es la
+            comparación por familia, donde ninguna participó en seleccionar a las otras.
+          </span>
+        </p>
+      )}
+
       {killGate?.detalle && (
         <p className="mt-2 text-[11px] text-faint leading-relaxed">{killGate.detalle}</p>
       )}
