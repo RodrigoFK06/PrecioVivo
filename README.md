@@ -49,7 +49,7 @@ Cuatro tipos, sobre `web/data/snapshot.json` (función pura de un artefacto ya v
 | `mercado-dia` | día | 524 | "¿qué está más barato hoy?" |
 | `producto-perfil` | producto | 72 | "¿cuánto suele costar en agosto?" |
 
-**9 206 chunks.**
+**9 041 chunks históricos** más una ventana reciente de ~160 que se reconstruye cada día (el corpus pasado es inmutable; solo se reindexan las últimas semanas).
 
 ### Por qué semanal: la medición, no la intuición
 
@@ -92,7 +92,7 @@ Las evaluaciones lo miden por separado, y el resultado justifica tenerlo: piso s
 
 | Backend | Rol |
 |---|---|
-| `NumpyIndex` | **Oráculo exacto.** A 9 206 chunks el k-NN es un producto matriz-vector: ~1 ms, más rápido que cualquier índice aproximado. Los tests verifican contra él. |
+| `NumpyIndex` | **Oráculo exacto.** A ~9 200 chunks el k-NN es un producto matriz-vector: ~1 ms, más rápido que cualquier índice aproximado. Los tests verifican contra él. |
 | `SqliteVecIndex` | Persistente, sobre la SQLite que el proyecto ya usa. |
 | `PgVectorIndex` | Destino de producción; el único que hace ANN filtrado en el motor. |
 

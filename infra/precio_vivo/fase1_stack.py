@@ -85,6 +85,12 @@ class Fase1Stack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
+        # La Fase 3 escribe aquí el snapshot y guarda su estado bajo `estado/`.
+        # Se expone el bucket en vez de crear uno nuevo: el export TIENE que
+        # escribir en este objeto de todos modos, así que el acoplamiento entre
+        # fases ya existe; duplicar el bucket solo lo escondería.
+        self.bucket = bucket
+
         # --- Lambda -------------------------------------------------------
         # Grupo de logs explícito en vez de `log_retention=`. Ese atajo despliega
         # una Lambda auxiliar cuyo único trabajo es llamar a PutRetentionPolicy,

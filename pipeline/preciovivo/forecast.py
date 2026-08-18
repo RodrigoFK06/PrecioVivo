@@ -679,8 +679,84 @@ def _kill_gate(series_por_prod: dict[str, list[dict]]) -> dict:
     }
 
 
-def _comparacion_modelos(series_por_prod: dict[str, list[dict]]) -> dict:
+_SIN_CALCULAR = object()  # centinela: distingue "no me lo dieron" de "dio None"
+
+
+def _comparacion_producto(series: list[dict], h: int) -> dict | None:
+    """MAE walk-forward de las cuatro familias PARA UN SOLO PRODUCTO.
+
+    POR QUÉ EXISTE ESTA FUNCIÓN
+    ---------------------------
+    Es el cuerpo del bucle interno de `_comparacion_modelos`, extraído sin
+    cambiar una sola llamada. No es una mejora del modelo: es que ese bucle
+    tarda ~629 s sobre 73 productos y el límite de una Lambda son 900 s. Como el
+    trabajo de cada producto es independiente del de los demás, sacarlo a una
+    función permite repartirlo (un `Map` de Step Functions) y que el agregado se
+    haga después sobre los resultados.
+
+    LO QUE NO CAMBIA, que es el punto
+    ---------------------------------
+    `_walk_forward_mae`, `_walk_forward_mae_lineal`, `_walk_forward_mae_gbm`,
+    `_impute_vol` y `_limpiar` se llaman con los mismos argumentos y en el mismo
+    orden. El re-ajuste del GBM por origen y el forward-fill causal del volumen
+    siguen donde estaban. Esto es un movimiento de código, no un cambio de
+    método, y se verifica diffeando la salida completa contra la anterior.
+
+    Devuelve None cuando el producto no es evaluable — los dos `continue` del
+    bucle original: menos de MIN_OBS observaciones, o ningún baseline calculable.
+    """
+    s = _limpiar(series)
+    if s.n_obs < MIN_OBS:
+        return None
+    y = s.precios
+
+    # baseline = el mejor de la escalera simple, por producto
+    maes_base = []
+    for fn in _MODELOS.values():
+        m, k = _walk_forward_mae(y, fn, h)
+        if k > 0 and not np.isnan(m):
+            maes_base.append(m)
+    if not maes_base:
+        return None
+    mae_base = min(maes_base)
+
+    # ar1 price-only (mismo control que el kill-gate de volumen)
+    mae_ar1 = None
+    ma, ka = _walk_forward_mae_lineal(y, None, h)
+    if ka > 0 and not np.isnan(ma):
+        mae_ar1 = ma
+
+    # volumen (solo si hay masa suficiente)
+    vol = _impute_vol(s.masas)
+    mae_vol = None
+    if vol is not None:
+        mv, kv = _walk_forward_mae_lineal(y, vol, h)
+        if kv > 0 and not np.isnan(mv):
+            mae_vol = mv
+
+    # gbm (solo si hay historia suficiente)
+    mae_gbm = None
+    if s.n_obs >= MIN_OBS_GBM:
+        mg, kg = _walk_forward_mae_gbm(y, s.fechas, h)
+        if kg > 0 and not np.isnan(mg):
+            mae_gbm = mg
+
+    # float() y no np.float64: el resultado viaja por JSON hasta el paso de
+    # reducción. El valor es el mismo; `_agg` ya hacía np.asarray(..., float).
+    return {"baseline": float(mae_base),
+            "ar1": float(mae_ar1) if mae_ar1 is not None else None,
+            "volumen": float(mae_vol) if mae_vol is not None else None,
+            "gbm": float(mae_gbm) if mae_gbm is not None else None}
+
+
+def _comparacion_modelos(series_por_prod: dict[str, list[dict]],
+                         por_producto: dict[str, dict] | None = None) -> dict:
     """Comparación honesta de familias de modelos por horizonte (MAE walk-forward).
+
+    `por_producto` es el resultado ya calculado de `_comparacion_producto`, en la
+    forma {nombre: {"1": {...}|None, "7": {...}|None}}. Si se pasa, esta función
+    solo AGREGA — es el paso de reducción tras repartir el cálculo. Si no se pasa
+    (el caso local de siempre), lo calcula aquí y el comportamiento es idéntico.
 
     Para cada horizonte h en HORIZONTES, agrega sobre productos el MAE
     walk-forward de cuatro familias:
@@ -716,50 +792,19 @@ def _comparacion_modelos(series_por_prod: dict[str, list[dict]]) -> dict:
         n_total = 0
         n_gbm = 0
         for nombre, series in series_por_prod.items():
-            s = _limpiar(series)
-            if s.n_obs < MIN_OBS:
+            r = (por_producto or {}).get(nombre, {}).get(str(h), _SIN_CALCULAR)
+            if r is _SIN_CALCULAR:
+                r = _comparacion_producto(series, h)
+            if r is None:
                 continue
-            y = s.precios
-
-            # baseline = el mejor de la escalera simple, por producto
-            maes_base = []
-            for fn in _MODELOS.values():
-                m, k = _walk_forward_mae(y, fn, h)
-                if k > 0 and not np.isnan(m):
-                    maes_base.append(m)
-            if not maes_base:
-                continue
-            mae_base = min(maes_base)
-
-            # ar1 price-only (mismo control que el kill-gate de volumen)
-            mae_ar1 = None
-            ma, ka = _walk_forward_mae_lineal(y, None, h)
-            if ka > 0 and not np.isnan(ma):
-                mae_ar1 = ma
-
-            # volumen (solo si hay masa suficiente)
-            vol = _impute_vol(s.masas)
-            mae_vol = None
-            if vol is not None:
-                mv, kv = _walk_forward_mae_lineal(y, vol, h)
-                if kv > 0 and not np.isnan(mv):
-                    mae_vol = mv
-
-            # gbm (solo si hay historia suficiente)
-            mae_gbm = None
-            if s.n_obs >= MIN_OBS_GBM:
-                mg, kg = _walk_forward_mae_gbm(y, s.fechas, h)
-                if kg > 0 and not np.isnan(mg):
-                    mae_gbm = mg
-                    algun_gbm = True
-
-            base_l.append(mae_base)
-            ar1_l.append(mae_ar1 if mae_ar1 is not None else np.nan)
-            vol_l.append(mae_vol if mae_vol is not None else np.nan)
-            gbm_l.append(mae_gbm if mae_gbm is not None else np.nan)
+            base_l.append(r["baseline"])
+            ar1_l.append(r["ar1"] if r["ar1"] is not None else np.nan)
+            vol_l.append(r["volumen"] if r["volumen"] is not None else np.nan)
+            gbm_l.append(r["gbm"] if r["gbm"] is not None else np.nan)
             n_total += 1
-            if mae_gbm is not None:
+            if r["gbm"] is not None:
                 n_gbm += 1
+                algun_gbm = True
 
         if n_total == 0:
             por_h[str(h)] = {

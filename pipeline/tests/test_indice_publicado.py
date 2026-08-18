@@ -64,11 +64,22 @@ def meta_de(parte: str) -> dict:
 
 
 def chunks_declarados_en_readme() -> int:
-    """El total que el README publica, p. ej. `**9 206 chunks.**`."""
-    m = re.search(r"^\*\*([\d ]+) chunks\.\*\*$", README.read_text(encoding="utf-8"),
+    """Los chunks HISTÓRICOS que publica el README, p. ej. `**9 041 chunks históricos**`.
+
+    Antes esta función leía el TOTAL, y era un error de diseño: `rag-reciente` es
+    una ventana móvil que cambia de tamaño cada día que corre la tarea diaria, así
+    que el guard fallaba solo —y con razón, pero sin que hubiera nada que
+    arreglar—. Se comprobó en carne propia: 165 chunks un día, 159 al siguiente.
+
+    Lo que sí se puede pinear es la parte histórica, que es inmutable por diseño
+    (el corpus pasado no se reescribe; ver README, sección RAG). Un número que
+    cambia solo no se puede atar a la documentación sin convertir el guard en
+    ruido, y un guard que cría lobos deja de mirarse.
+    """
+    m = re.search(r"^\*\*([\d ]+) chunks históricos", README.read_text(encoding="utf-8"),
                   re.MULTILINE)
-    assert m, ("No encontré la línea `**N chunks.**` en el README. Es el número "
-               "que este guard contrasta contra el artefacto; si cambia de "
+    assert m, ("No encontré la línea `**N chunks históricos...` en el README. Es el "
+               "número que este guard contrasta contra el artefacto; si cambia de "
                "formato, actualiza también esta expresión.")
     return int(m.group(1).replace(" ", ""))
 
@@ -121,21 +132,47 @@ def test_ambas_partes_comparten_embebedor():
 def test_conteo_de_chunks_coincide_con_el_readme():
     """El README no puede afirmar un tamaño de corpus que el artefacto no tiene.
 
-    Es la regla de "nada se afirma sin calcularse" aplicada a la documentación:
-    el número queda atado al archivo, así que una reconstrucción que cambie el
-    corpus obliga a actualizar el README en el mismo commit.
+    Es la regla de "nada se afirma sin calcularse" aplicada a la documentación.
+    Se contrasta la parte HISTÓRICA, que es la inmutable; la reciente es una
+    ventana móvil y se comprueba aparte, por rango, en el test siguiente.
     """
     if not all((WEB_DATA / f"{p}.json.gz").exists() for p in PARTES):
         pytest.skip("cubierto por test_existe_cada_parte_del_indice")
 
-    por_parte = {p: meta_de(p)["n_chunks"] for p in PARTES}
-    real = sum(por_parte.values())
+    real = meta_de("rag-historico")["n_chunks"]
     declarado = chunks_declarados_en_readme()
-    desglose = ", ".join(f"{p}={n:,}" for p, n in por_parte.items())
     assert real == declarado, (
-        f"El README declara {declarado:,} chunks y el índice publicado tiene "
-        f"{real:,} ({desglose}).\n"
-        f"Si la reconstrucción es correcta, el que hay que corregir es el README.")
+        f"El README declara {declarado:,} chunks históricos y el índice publicado "
+        f"tiene {real:,}.\n"
+        f"El corpus histórico es inmutable por diseño, así que esto solo cambia "
+        f"tras una reconstrucción completa. Si esa reconstrucción es correcta, el "
+        f"que hay que corregir es el README.")
+
+
+def test_la_ventana_reciente_tiene_un_tamano_razonable():
+    """`rag-reciente` se mueve cada día; lo que no puede es estar vacía ni desbocarse.
+
+    No se pinea un número porque no lo hay: la ventana cubre las últimas semanas y
+    su tamaño depende de cuántos días hábiles caigan dentro. Se comprobó en carne
+    propia — 165 chunks un día, 159 al siguiente — y el guard anterior, que ataba
+    el TOTAL al README, fallaba solo cada vez que corría la tarea diaria. Un guard
+    que cría lobos deja de mirarse, así que aquí se pinea el rango, no el número.
+
+    Lo que sí es un fallo: que quede a cero (la reconstrucción diaria no escribió
+    nada y el sitio se queda sin las últimas semanas) o que crezca hasta parecerse
+    al histórico (está reindexando de más y el repo engorda ~2 MB por día).
+    """
+    if not (WEB_DATA / "rag-reciente.json.gz").exists():
+        pytest.skip("cubierto por test_existe_cada_parte_del_indice")
+
+    n = meta_de("rag-reciente")["n_chunks"]
+    historico = meta_de("rag-historico")["n_chunks"]
+    assert n > 0, ("rag-reciente tiene 0 chunks: la reconstrucción diaria no "
+                   "escribió nada y el sitio se queda sin las últimas semanas.")
+    assert n < historico // 4, (
+        f"rag-reciente tiene {n:,} chunks contra {historico:,} del histórico. "
+        f"La ventana reciente debería ser una fracción pequeña; a este tamaño está "
+        f"reindexando de más y cada corrida diaria añade ~2 MB al repositorio.")
 
 
 def test_el_bin_y_el_json_describen_el_mismo_numero_de_chunks():

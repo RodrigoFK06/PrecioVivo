@@ -184,11 +184,17 @@ Las tres salidas cuando llegue el momento:
 ### Cómo destruirlo todo
 
 ```bash
-cd infra && cdk destroy PrecioVivoFase1
+cd infra && cdk destroy PrecioVivoFase3   # PRIMERO, ver abajo
+cdk destroy PrecioVivoFase1
 ```
 
-Borra los 13 recursos, **incluido el bucket con su contenido** (de eso se ocupa
-`auto_delete_objects`).
+**El orden importa desde la Fase 3.** Ese stack importa este bucket vía *Exports*
+de CloudFormation, así que destruir la Fase 1 primero falla — y falla bien:
+CloudFormation impide borrar algo que otro stack está usando.
+
+Destruir la Fase 1 borra los 13 recursos, **incluido el bucket con su contenido**
+(de eso se ocupa `auto_delete_objects`), y con él se va también el estado de la
+Fase 3, que vive bajo el prefijo `estado/`.
 
 **Queda huérfano el bootstrap.** Para no dejar rastro:
 
@@ -428,3 +434,359 @@ baja cardinalidad a dimensión de CloudWatch, alta cardinalidad a campo de un
 registro en DynamoDB. De hecho esto me hizo encontrar un bug: en la fase
 anterior estaba emitiendo el slug del producto dentro de la dimensión, que es
 exactamente el error que acabo de describir.
+
+---
+
+## Fase 3 — La ingesta diaria, orquestada
+
+Stack: **`PrecioVivoFase3`** — 27 recursos.
+
+ARN: `arn:aws:cloudformation:us-east-1:813559109370:stack/PrecioVivoFase3/c279d8d0-9b45-11f1-8a8a-12f344fd0607`
+
+### Qué se creó
+
+| recurso | ARN / identificador |
+|---|---|
+| Máquina de estados | `arn:aws:states:us-east-1:813559109370:stateMachine:Diaria5ADE8804-twQvVXkfjRsW` |
+| Programador | `arn:aws:scheduler:us-east-1:813559109370:schedule/default/PrecioVivoFase3-Diario-CSFCXGQHR3N7` |
+| Lambda cosecha | `PrecioVivoFase3-IngestaD47E65D5-27579CHIFJoV` |
+| Lambda listado | `PrecioVivoFase3-ForecastListar126FE65F-P6fAKCGt1LY5` |
+| Lambda por producto | `PrecioVivoFase3-ForecastProducto01E0F8AF-7cjPi8vtZdI8` |
+| Lambda reducción | `PrecioVivoFase3-ForecastReducirC4668B38-d1HKQnDczGII` |
+| Lambda export | `PrecioVivoFase3-Export16632B07-1gTxH2x9vXtV` |
+
+Más 5 grupos de logs, 7 roles y sus políticas.
+
+**Sin bucket nuevo.** El estado vive bajo el prefijo `estado/` del bucket de la
+Fase 1, porque el export tiene que escribir `snapshot.json` ahí de todos modos:
+el acoplamiento entre fases ya existía y duplicar el bucket solo lo escondería.
+La contrapartida está en "Cómo destruirlo".
+
+```
+estado/preciovivo.db          7,6 MB   la SQLite entera
+estado/forecast_cache.json   26,8 KB   lo que calcula el forecast, lo lee el export
+snapshot.json                 3,3 MB   lo que sirve la Fase 1
+```
+
+### Lo primero que había que averiguar: ¿deja el WAF entrar a Lambda?
+
+`harvester.py` avisa en su propio docstring de que corre en local *porque el WAF
+de gob.pe no bloquea esa máquina*, y el script diario advierte de que un runner
+de datacenter podría estar bloqueado. gob.pe sirve tras **Huawei Cloud WAF**
+(cookie `HWWAFSESID`) y Lambda sale por IP de datacenter de AWS. Eso es un
+go/no-go de la fase entera y no se puede responder desde casa.
+
+Se desplegó un stack desechable con una Lambda que recorre la cadena real del
+harvester —no una reimplementación—, se invocó una vez y se destruyó. El código
+sigue en `infra/lambda_sonda/`, porque la forma de contestar la pregunta vale
+tanto como la respuesta.
+
+| paso | resultado |
+|---|---|
+| IP de salida | `3.215.153.209` (AWS us-east-1) |
+| Colección 335 | 155.255 bytes, **83 páginas de mes parseadas** |
+| Listado de PDFs | 2 fechas, la última la de hoy |
+| Descarga del CDN | **612.162 bytes**, magic `%PDF-` válido |
+
+No se comprobó "status 200": un WAF devuelve 200 con una página de desafío tan
+contento, y el código diría que funciona sin funcionar. Se comprobó que el
+contenido **sirve para cosechar**.
+
+Dato secundario que sí cambió el diseño: la colección tarda **15 s desde Lambda**
+contra 1,4 s desde una máquina en Lima. No es bloqueo, son ~3 s por petición. Los
+timeouts se dimensionaron con eso.
+
+### La máquina de estados
+
+```
+Cosechar → PasoLaCompuerta ─┬→ CompuertaDeEscritura (Fail)
+                            └→ ListarProductos → PorProducto (Map ×8) → Reducir → Exportar → Publicado
+```
+
+**Step Functions Standard y no Express**: Express corta a los 5 minutos y esto
+dura ~7. Standard además guarda el historial completo de cada ejecución 90 días
+sin configurar nada — que es la razón de que **no** se active el registro en
+CloudWatch Logs: duplicaría el mismo dato y sí cobraría por él.
+
+**EventBridge Scheduler y no una regla de EventBridge**: entiende
+`America/Lima` de forma nativa. No hay una resta a UTC escrita a mano que alguien
+tenga que revisar cuando cambie algo.
+
+```
+cron(0 8 * * ? *)   ScheduleExpressionTimezone: America/Lima   FlexibleTimeWindow: OFF
+```
+
+Todos los días, también fin de semana. Un día sin reporte nuevo es un no-op que
+termina en verde, y `--latest 5` hace que la tubería **se cure sola**: si un día
+falla, el siguiente recupera lo que faltaba. Programarla solo de lunes a viernes
+ahorraría dos ejecuciones vacías al mes y perdería esa propiedad.
+
+### La política de reintentos, que es lo que separa una tubería de un cron
+
+No es la misma para todos los pasos, y ésa es la idea:
+
+| paso | reintentos | por qué |
+|---|---|---|
+| cosecha, listado, export | `States.ALL` ×3, backoff ×2 | fallan por red o por S3, que son transitorios — y se pueden reintentar **porque son idempotentes**: `upsert_precios` reescribe lo mismo y el snapshot se regenera entero. Si no lo fueran, el reintento sería el bug |
+| trabajadores del forecast | **solo errores de infraestructura de Lambda** | un cálculo determinista que falló volverá a fallar; reintentarlo es pagar para llegar al mismo sitio más tarde |
+| el parseo | **nunca** | y no por política, sino por estructura |
+
+Lo del parseo merece el detalle: un PDF que no se parsea **no lanza excepción**.
+Sale como `bloqueados` en el resultado y la máquina deriva a un estado `Fail`. No
+hay reintento posible porque no hay error que reintentar.
+
+### El fallo visible, que era un agujero real
+
+`ingest.main()` termina con `return 0` pase lo que pase. La compuerta `MIN_ROWS`
+hace bien su trabajo —bloquea la carga de un reporte estructuralmente roto— pero
+después el proceso sale con éxito. Si mañana MIDAGRI cambia el layout del PDF, la
+tarea diaria de Windows queda **en verde** mientras deja de entrar el dato.
+
+Una compuerta que protege el dato y no avisa a nadie no es una compuerta.
+
+Aquí la condición es explícita y está elegida con cuidado:
+
+```python
+fallo_de_compuerta = bool(objetivos) and cargados == 0 and bloqueados > 0
+```
+
+"Cero cargados" **no** es fallo por sí solo: un sábado no hay reporte nuevo y no
+cargar nada es la respuesta correcta. Marcarlo como error entrenaría a cualquiera
+a ignorar las alarmas, que es peor que no tenerlas. El fallo de verdad es haber
+**encontrado** reportes y que **todos** quedaran bloqueados: los PDFs están ahí y
+ya no sabemos leerlos.
+
+### El forecast: por qué está repartido
+
+Medido sobre la BD real antes de decidir nada:
+
+| bloque | tiempo | ¿paralelizable? |
+|---|---|---|
+| `forecast_producto` (h=1), 73 productos | 619,8 s | sí, es puro por producto |
+| `_comparacion_modelos` | 629,1 s | por dentro sí; por fuera agrega |
+| `_forecast_7d` | mismo orden | sí |
+| `_kill_gate` | **0,5 s** | irrelevante |
+
+El comentario de `actualizar-diario.ps1` dice `~14 min`. **Está desactualizado**:
+el walk-forward crece con la historia y hoy son ~31 min en esa máquina. Contra el
+límite duro de Lambda, 15 minutos, no cabe por el doble.
+
+**El refactor, y lo que NO se tocó.** `_comparacion_modelos` era
+`for h: for producto: <cuatro MAE>` con una media al final. Se extrajo el cuerpo
+del bucle a `_comparacion_producto(series, h)`. `_walk_forward_mae`,
+`_walk_forward_mae_lineal`, `_walk_forward_mae_gbm`, `_impute_vol` y `_limpiar`
+se llaman con los mismos argumentos y en el mismo orden; el re-ajuste del GBM por
+origen y el forward-fill causal del volumen siguen donde estaban.
+
+Verificado como debe verificarse un refactor de la pieza más delicada del repo:
+capturando la salida completa antes y después sobre los 73 productos reales.
+
+```
+antes     1708 bytes  sha256 d259fb94189785e8
+despues   1708 bytes  sha256 d259fb94189785e8
+bytes identicos: True
+```
+
+### La ejecución real, medida
+
+Ejecución `verificacion-manual-3`, **SUCCEEDED en 397 s**:
+
+| paso | resultado |
+|---|---|
+| Cosechar | 5 días cargados, 0 bloqueados, 37.892 filas, última fecha 2026-08-18 — **19 s** |
+| Map (73 productos) | p50 **39,17 s**, p95 44,92 s, máx 48,21 s · 11 contenedores · 10 arranques en frío de 83 invocaciones (init 1,73 s) · **333 MB usados de 1.769** |
+| Reducir | 73 pronósticos guardados, caché de 27.448 bytes — **2,3 s** |
+| Exportar | snapshot de 3.500.806 bytes, 72 productos, **72 con forecast** — **4,1 s** |
+
+**Corrección honesta:** yo había estimado ~25 s por producto y ~4 min de reloj.
+Ese número salía de mi máquina; la vCPU de Lambda es más lenta. Lo real son
+**39 s** por producto y 397 s de reloj — y en serie serían **52 minutos**, no 31.
+El argumento a favor de repartirlo sale reforzado, pero la estimación era mía y
+estaba mal.
+
+Los 333 MB usados de 1.769 no son un error de dimensionamiento: la memoria se
+eligió por **CPU**, no por RAM. Lambda asigna una vCPU completa alrededor de los
+1.769 MB, y el GBM es CPU pura de un solo hilo. La medición confirma que la RAM
+nunca fue el criterio.
+
+**El círculo se cierra**: el export escribe en el mismo `snapshot.json` que lee la
+Lambda de la Fase 1, y `/health` respondió con `ultima_fecha: 2026-08-18` y
+`generado_en: 2026-08-18T21:05:32+00:00` minutos después. Las dos fases dejaron
+de ser dos demos.
+
+Un resultado que no es de infraestructura pero conviene anotar: con 537 fechas de
+historia el GBM ya se evalúa en los 72 productos (`gbm_disponible: true`) y
+**pierde contra AR(1)** en ambos horizontes (0,1711 contra 0,1476 a un día). El
+kill-gate está diciendo exactamente lo que se construyó para decir.
+
+### Empaquetado: tres paquetes, no uno
+
+| Lambda | dependencias | tamaño |
+|---|---|---|
+| cosecha | `requests` + `pdfplumber` | ~60 MB |
+| export | `numpy` + `holidays` | ~59 MB |
+| forecast | + `scikit-learn` (arrastra scipy) | **207,6 MB** |
+
+El límite, leído de la API y no de memoria:
+
+```
+aws lambda get-account-settings → CodeSizeUnzipped: 262144000   (250 MiB)
+```
+
+**El export no lleva scikit-learn y no es un descuido.** `export._add_forecast`
+llama a `forecast_all_cached`, así que importa `forecast`, que importa numpy. Pero
+sklearn lo importa `forecast` **dentro de `_nuevo_gbm`**, no en el módulo: con el
+caché ya escrito por el paso anterior ese camino nunca se recorre. Un import
+perezoso escrito por otra razón acaba decidiendo el empaquetado. Por eso se mide.
+
+**Se construye en Docker**, con la imagen de build de SAM. No por gusto: `pip
+install --target` desde este Windows con Python 3.14 deja el bytecode como
+`.cpython-314.pyc`, inútil para el runtime 3.13 — 33 MB de peso muerto y ninguna
+precompilación válida, así que cada arranque en frío recompilaría.
+
+**Ni capa ni imagen de contenedor.** En crudo el forecast pesa 275 MB y no cabe;
+podando `tests/` baja a 207,6 con 42 MB de margen. Un zip basta, y eso ahorra un
+repositorio ECR.
+
+### Tres errores propios, porque también son parte del resultado
+
+**1. `cp -a` en el bundling.** El ejemplo de la documentación de CDK usa
+`cp -au . /asset-output`. En un bind mount de Docker Desktop sobre Windows,
+corriendo como UID 1000, falla con `preserving times: Operation not permitted` y
+tumba el bundling entero. Se cambió por `cp -r`.
+
+**2. Podar los `.dist-info`.** Ahorraban 1 MB de 208 y rompieron la ejecución
+real: `Unable to import module 'forecast_lambda': No package metadata was found
+for holidays`. `holidays` lee su propia versión con `importlib.metadata`, que
+resuelve contra ese directorio. Los `.dist-info` no son metadatos muertos.
+
+**3. `max_concurrency=20` contra una cuota de 10.** La primera corrida con el
+Map murió con `Lambda.TooManyRequestsException`. La causa, medida:
+
+```
+aws lambda get-account-settings → ConcurrentExecutions: 10
+```
+
+Una cuenta nueva de AWS arranca con **10 ejecuciones concurrentes**, no con las
+1.000 que suelen suponerse. Se bajó a 8, dejando 2 para la Lambda de consultas de
+la Fase 1, que comparte el mismo cupo. Se sube pidiendo cuota (Service Quotas,
+`L-B99A9384`); no se pide desde el código, porque cambiar los límites de una
+cuenta no es algo que deba hacer la infraestructura por su cuenta.
+
+Los tres los encontró **correr la tubería de verdad**, no sintetizar la plantilla.
+
+### Permisos IAM
+
+Una sentencia por necesidad real. Ninguna función recibe el bucket entero:
+`grant_read`/`grant_write` de CDK conceden familias completas (`GetObject*`,
+`GetBucket*`, `List*`) y aquí se sabe exactamente qué objeto toca cada paso.
+
+| función | permiso | por qué |
+|---|---|---|
+| cosecha | `s3:GetObject`, `s3:PutObject` sobre `estado/preciovivo.db` | lee la BD y la reescribe |
+| listado, por-producto | `s3:GetObject` sobre `estado/preciovivo.db` | **solo leen**. 73 escritores concurrentes sobre el mismo objeto es justo el fallo que no debe ser posible |
+| reducción | `Get`+`Put` sobre `estado/preciovivo.db` y `estado/forecast_cache.json` | escribe el caché y el historial de pronósticos |
+| export | `Get` sobre los dos de `estado/`, `Put` sobre `snapshot.json` | lee el estado, publica el snapshot |
+| máquina de estados | `lambda:InvokeFunction` sobre las 5 funciones | |
+| programador | `states:StartExecution` sobre esta máquina | |
+
+Ninguna función necesita permisos de red: salir a internet no lo concede IAM, lo
+concede estar fuera de una VPC.
+
+### Escritura condicional: por qué no basta un PutObject
+
+**EventBridge Scheduler entrega al menos una vez.** Es el contrato del servicio,
+no una hipótesis de manual. Dos ejecuciones solapadas descargarían la misma
+SQLite, cada una haría su trabajo, y la última en subir borraría el trabajo de la
+otra **sin dejar un solo error en ningún log**. La pérdida silenciosa es el peor
+fallo posible porque nadie la busca.
+
+`IfMatch` con el ETag que se leyó convierte eso en un 412: la segunda ejecución
+falla ruidosamente y la máquina queda en rojo. En la primera ejecución, cuando el
+objeto aún no existe, se usa `IfNoneMatch: "*"`. Cuesta cero.
+
+### Costo
+
+Por corrida: 73 × 39,17 s × 1,769 GB ≈ 5.058 GB-s del Map, más ~30 de los otros
+cuatro pasos. Con 30 corridas al mes son **~152.700 GB-s**.
+
+| concepto | mensual |
+|---|---|
+| Lambda | **0,00 USD** — capa gratuita permanente de 400.000 GB-s |
+| Step Functions Standard (~4.560 transiciones) | ~0,01 USD — 4.000 gratis |
+| S3 (versiones de la BD, expiran a 30 días) | ~0,01 USD |
+| EventBridge Scheduler (30 disparos) | 0,00 USD — 14 M gratis |
+| **Total** | **≈ 0,02 USD** |
+
+**Con ×100 productos (7.300) esto deja de ser gratis.** El Map serían 15,2 M
+GB-s/mes: **~246 USD/mes** de Lambda más ~11 de Step Functions. Es el primer
+sitio del proyecto donde escalar cuesta dinero de verdad, y el culpable tiene
+nombre: re-ajustar un GBM en cada origen del walk-forward es caro por diseño. Ahí
+la palanca no es de infraestructura —es decidir si el kill-gate necesita correr
+todos los días o basta una vez por semana.
+
+### Tres techos, medidos
+
+| techo | hoy | dónde revienta |
+|---|---|---|
+| Estado de Step Functions | 36,6 KB de 256 KB (14%) | **510 productos**: cada parte del Map son 514 bytes. Al pasarlo, cada trabajador escribe su resultado en S3 y el reductor los lee |
+| Timeout del trabajador | 39 s de 300 | **~7,6× más historia** por producto |
+| Concurrencia de la cuenta | 8 de 10 | ya lo estamos rozando: el Map es lo que limita la cuota, no el diseño |
+
+### Cómo destruirlo
+
+```bash
+cd infra && cdk destroy PrecioVivoFase3   # primero éste
+cdk destroy PrecioVivoFase1               # después éste
+```
+
+**El orden importa.** La Fase 3 importa el bucket de la Fase 1 vía *Exports* de
+CloudFormation, así que destruir la Fase 1 primero falla. Es el precio de
+reutilizar el bucket en vez de crear uno nuevo, y es el comportamiento correcto:
+CloudFormation impide borrar algo que otro stack está usando.
+
+Destruir la Fase 3 **no** borra `estado/preciovivo.db` ni `estado/forecast_cache.json`:
+viven en el bucket de la Fase 1 y se van con él.
+
+El bootstrap sigue quedando huérfano; ver "Cómo destruirlo todo" de la Fase 1.
+
+### Tres preguntas de entrevista
+
+**1. Tienes un cálculo de 52 minutos y Lambda corta a los 15. ¿Por qué no lo
+sacaste a Fargate?**
+
+Porque medí dónde estaba el tiempo antes de elegir servicio. De los 52 minutos,
+medio segundo era agregación real y el resto era trabajo por producto,
+independiente entre productos. Eso no es un trabajo largo: son 73 trabajos cortos
+disfrazados de uno largo, y un `Map` de Step Functions los reparte a 39 segundos
+cada uno. Fargate habría funcionado, pero necesita VPC, añade una pieza de
+cómputo más que mantener, y sobre todo no arregla el problema de fondo: en serie
+sigue creciendo con la historia, mientras que repartido el trabajo por unidad se
+queda pequeño. El precio que pagué fue extraer el cuerpo de un bucle a una
+función en el archivo más delicado del repositorio, así que lo verifiqué
+capturando la salida completa antes y después sobre los datos reales: mismo
+sha256, byte a byte.
+
+**2. Los reintentos no son iguales en todos los pasos. ¿Por qué?**
+
+Porque no fallan por lo mismo. La cosecha y el export fallan por red o por S3,
+que son transitorios, y además son idempotentes —el upsert reescribe lo mismo y
+el snapshot se regenera entero—, así que se pueden reintentar sin pensarlo. Si no
+fueran idempotentes, el reintento sería el bug y no la solución. Los trabajadores
+del forecast hacen un cálculo determinista: si falló, va a volver a fallar, así
+que solo reintento errores de infraestructura de Lambda. Y el parseo no se
+reintenta nunca, pero eso no lo consigue una política sino la estructura: un PDF
+que no se parsea no lanza excepción, sale como bloqueado en el resultado y un
+estado Choice deriva a un Fail. No hay error que reintentar.
+
+**3. Guardas una SQLite en S3 y la bajas y subes entera. ¿Eso no es un problema?**
+
+A este volumen, no: son 7,6 MB y hay un escritor al día. La alternativa es una
+RDS, que cuesta unos 15 dólares al mes encendida a todas horas para servir una
+escritura diaria, y arrastra VPC, y la VPC arrastra NAT Gateway o endpoints. Lo
+que sí hice fue protegerlo del único escenario realista de corrupción: EventBridge
+Scheduler entrega al menos una vez, así que dos ejecuciones solapadas se pisarían
+la base sin dejar rastro en ningún log. La subida va con `IfMatch` y el ETag que
+leí, de modo que la segunda recibe un 412 y falla en rojo en vez de borrar el
+trabajo de la primera. Esto deja de valer el día que haya escritores concurrentes
+de verdad, y entonces la señal para migrar es clara: el primer 412 legítimo.
