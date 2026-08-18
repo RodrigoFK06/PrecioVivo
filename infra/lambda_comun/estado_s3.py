@@ -4,6 +4,7 @@ QUÉ ES EL ESTADO
 ----------------
     estado/preciovivo.db        la SQLite entera (7,9 MB)
     estado/forecast_cache.json  lo que calcula el forecast y consume el export
+    estado/sisap_check.json     el contraste con SISAP que el export adjunta
 
 POR QUÉ S3 Y NO UNA BASE GESTIONADA
 ------------------------------------
@@ -33,6 +34,7 @@ import boto3
 BUCKET = os.environ["BUCKET_ESTADO"]
 CLAVE_DB = os.environ.get("CLAVE_DB", "estado/preciovivo.db")
 CLAVE_CACHE = os.environ.get("CLAVE_CACHE_FORECAST", "estado/forecast_cache.json")
+CLAVE_SISAP = os.environ.get("CLAVE_SISAP", "estado/sisap_check.json")
 
 # La SQLite y el caché del forecast tienen que caer en el MISMO directorio:
 # forecast._cache_path() deriva la ruta del caché de la de la BD. Si se separan,
@@ -40,6 +42,8 @@ CLAVE_CACHE = os.environ.get("CLAVE_CACHE_FORECAST", "estado/forecast_cache.json
 DIR = "/tmp"
 RUTA_DB = os.path.join(DIR, "preciovivo.db")
 RUTA_CACHE = os.path.join(DIR, "forecast_cache.json")
+# sisap._check_path() lo deriva igual: mismo directorio que la BD.
+RUTA_SISAP = os.path.join(DIR, "sisap_check.json")
 
 _s3 = boto3.client("s3")
 
@@ -85,3 +89,21 @@ def bajar_cache_forecast() -> bool:
 def subir_cache_forecast(cuerpo: bytes) -> None:
     _s3.put_object(Bucket=BUCKET, Key=CLAVE_CACHE, Body=cuerpo,
                    ContentType="application/json")
+
+
+def bajar_sisap() -> bool:
+    """Trae sisap_check.json si existe. False si no, que es degradación válida:
+    el bloque `verificacion` simplemente no aparece en el snapshot."""
+    try:
+        r = _s3.get_object(Bucket=BUCKET, Key=CLAVE_SISAP)
+    except _s3.exceptions.NoSuchKey:
+        return False
+    with open(RUTA_SISAP, "wb") as f:
+        f.write(r["Body"].read())
+    return True
+
+
+def subir_sisap() -> None:
+    with open(RUTA_SISAP, "rb") as f:
+        _s3.put_object(Bucket=BUCKET, Key=CLAVE_SISAP, Body=f.read(),
+                       ContentType="application/json")

@@ -222,7 +222,7 @@ def main() -> int:
     ap.add_argument("--umbral", type=float, default=0.0,
                     help="recall@k mínimo; por debajo, sale con código 1")
     ap.add_argument("--embedder", default="fake",
-                    choices=["fake", "local", "api", "auto"])
+                    choices=["fake", "local", "api", "bedrock", "auto"])
     ap.add_argument("--snapshot", default=str(SNAPSHOT))
     ap.add_argument("--json", action="store_true", help="salida en JSON")
     ap.add_argument("-v", "--verboso", action="store_true")

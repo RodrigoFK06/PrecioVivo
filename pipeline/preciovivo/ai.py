@@ -38,6 +38,8 @@ except Exception:
 #   AI_BASE_URL (default https://api.deepseek.com)
 #   AI_MODEL    (default deepseek-chat)
 # Local/gratis (Ollama): AI_BASE_URL=http://localhost:11434/v1, AI_MODEL=llama3.1
+# openai | bedrock. Ver _client().
+AI_PROVIDER = os.environ.get("AI_PROVIDER", "openai").lower()
 AI_BASE_URL = os.environ.get("AI_BASE_URL", "https://api.deepseek.com")
 AI_MODEL = os.environ.get("AI_MODEL", "deepseek-chat")
 # Ventana de historia reciente para el z-score robusto y umbral de desviación.
@@ -57,10 +59,27 @@ def _api_key() -> str | None:
 # Cliente LLM (OpenAI-compatible, perezoso) con fallback obligatorio
 # --------------------------------------------------------------------------- #
 def _client():
-    """Cliente OpenAI-compatible (DeepSeek por defecto), o None sin clave/SDK.
+    """El cliente del proveedor configurado, o None si no hay ninguno usable.
 
-    Nunca lanza: la ausencia de clave es el camino normal (modo fallback).
+    Dos proveedores, elegidos por AI_PROVIDER:
+
+      openai (default)  cualquier endpoint OpenAI-compatible con clave.
+                        DeepSeek por defecto; también OpenAI, Ollama, etc.
+      bedrock           Amazon Bedrock firmado con el ROL de IAM. Sin clave que
+                        guardar, rotar ni filtrar. Es lo que se usa dentro de
+                        AWS; fuera no hay rol, así que allí sigue el otro.
+
+    Nunca lanza: la ausencia de proveedor es el camino normal (modo fallback
+    determinista). Que esto devuelva None no es un error, es una degradación
+    prevista — y por eso el resultado se etiqueta con `fuente`, para que nadie
+    confunda una respuesta del modelo con una plantilla.
     """
+    if AI_PROVIDER == "bedrock":
+        try:
+            from .bedrock_chat import ClienteBedrock
+            return ClienteBedrock()
+        except Exception:
+            return None
     key = _api_key()
     if not key:
         return None

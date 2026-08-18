@@ -426,12 +426,138 @@ def _espera_sugerida(e: Exception, por_defecto: float = 30.0) -> float:
 
 
 # --------------------------------------------------------------------------- #
+# Bedrock (rol de IAM, sin credenciales)
+# --------------------------------------------------------------------------- #
+BEDROCK_MODELO = os.environ.get("BEDROCK_EMBED_MODEL", "amazon.titan-embed-text-v2:0")
+BEDROCK_REGION = os.environ.get("AWS_REGION", "us-east-1")
+# LA CUOTA, que es lo que manda aquí y no se puede negociar:
+#
+#   aws service-quotas list-service-quotas --service-code bedrock
+#   "On-demand ... requests per minute for Amazon Titan Text Embeddings V2"
+#       Value: 60   Adjustable: FALSE
+#
+# Sesenta peticiones por minuto y NO ajustable: no hay formulario que pedir.
+# Titan embebe UN texto por llamada, así que son 60 chunks/minuto y el
+# paralelismo no sirve de nada — más hilos solo producen ThrottlingException
+# más rápido. Se aprendió por las malas: con 16 hilos, el backfill murió con
+# "reached max retries: 4".
+#
+# Por eso 4 hilos (para tapar la latencia de red, no para ir más rápido) y un
+# cubo de fichas global que impone el ritmo de verdad. 55 y no 60: la cuota se
+# mide en la ventana del servidor, no en la nuestra, y apurarla hasta el borde
+# solo cambia throttling por reintentos.
+BEDROCK_HILOS = int(os.environ.get("BEDROCK_EMBED_HILOS", "4"))
+BEDROCK_RPM = int(os.environ.get("BEDROCK_EMBED_RPM", "55"))
+
+
+class BedrockEmbedder:
+    """Embebedor vía Amazon Bedrock, autenticado con el rol de IAM.
+
+    POR QUÉ EXISTE, QUE NO ES "PORQUE AWS"
+    ---------------------------------------
+    `ApiEmbedder` necesita una clave de API que hay que guardar, rotar y no
+    filtrar. Dentro de AWS, este embebedor no necesita ninguna: boto3 firma con
+    las credenciales temporales del rol de la Lambda, que rotan solas y no
+    existen en ningún archivo. La credencial más segura es la que no hay.
+
+    Fuera de AWS sigue haciendo falta un par de claves, así que esto NO sustituye
+    a `ApiEmbedder` — lo acompaña. `get_embedder` elige.
+
+    LA FIRMA CAMBIA, Y ESO ES EL PUNTO
+    -----------------------------------
+    `bedrock:amazon.titan-embed-text-v2:0:256` no es
+    `api:jina-embeddings-v3:256`. Son espacios vectoriales distintos y el coseno
+    entre ellos no significa nada. El guard de firma existe justo para que
+    mezclarlos sea imposible en vez de ser un fallo silencioso: cambiar de
+    embebedor OBLIGA a reconstruir el índice entero.
+
+    Titan v2 acepta `dimensions` de verdad (verificado: 256, 512 y 1024 devuelven
+    exactamente ese tamaño) y normaliza él mismo, pero se re-normaliza igual: el
+    invariante de este módulo es que TODOS los embebedores devuelven L2=1, y
+    depender de que el proveedor lo cumpla es depender de su documentación.
+    """
+
+    def __init__(self, modelo: str = BEDROCK_MODELO, dims: int = EMBED_DIMS,
+                 region: str = BEDROCK_REGION):
+        try:
+            import boto3
+        except ImportError as e:  # noqa: TRY003
+            raise RuntimeError("El embebedor de Bedrock necesita: pip install boto3") from e
+        import threading
+        self._cliente = boto3.client("bedrock-runtime", region_name=region)
+        self.modelo_nombre = modelo
+        self.dims = dims
+        self.firma = f"bedrock:{modelo}:{dims}"
+        self._cerrojo = threading.Lock()
+        self._siguiente = 0.0
+
+    def _esperar_turno(self) -> None:
+        """Cubo de fichas global: reparte las peticiones a BEDROCK_RPM por minuto.
+
+        Va con cerrojo porque el ritmo tiene que ser del PROCESO, no de cada
+        hilo: cuatro hilos esperando cada uno su intervalo darían cuatro veces
+        la tasa pretendida, que es justo cómo se llega al 429.
+        """
+        if BEDROCK_RPM <= 0:
+            return
+        intervalo = 60.0 / BEDROCK_RPM
+        with self._cerrojo:
+            ahora = time.monotonic()
+            arranque = max(ahora, self._siguiente)
+            self._siguiente = arranque + intervalo
+        espera = arranque - time.monotonic()
+        if espera > 0:
+            time.sleep(espera)
+
+    def _uno(self, texto: str) -> np.ndarray:
+        import json as _json
+        cuerpo = _json.dumps({"inputText": texto, "dimensions": self.dims,
+                              "normalize": True})
+        for intento in range(6):
+            self._esperar_turno()
+            try:
+                r = self._cliente.invoke_model(modelId=self.modelo_nombre, body=cuerpo)
+                v = _json.loads(r["body"].read())["embedding"]
+                return np.asarray(v, dtype=np.float32)
+            except Exception as e:  # noqa: BLE001
+                codigo = getattr(e, "response", {}).get("Error", {}).get("Code", "")
+                # Solo el throttling se reintenta. Un modelo inexistente o un
+                # permiso que falta no se arreglan esperando, y reintentarlos
+                # cuatro veces solo retrasa el mensaje de error útil.
+                if codigo not in ("ThrottlingException", "TooManyRequestsException",
+                                  "ServiceUnavailableException", "ModelTimeoutException"):
+                    raise
+                if intento == 5:
+                    raise
+                time.sleep(2.0 * (2 ** intento))
+        raise RuntimeError("inalcanzable")
+
+    def embed_documentos(self, textos: list[str]) -> np.ndarray:
+        if not textos:
+            return np.zeros((0, self.dims), dtype=np.float32)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=BEDROCK_HILOS) as pool:
+            vectores = list(pool.map(self._uno, textos))
+        arr = np.vstack(vectores)
+        return _normalizar(self._verificar_dims(arr))
+
+    def embed_consulta(self, texto: str) -> np.ndarray:
+        arr = self._uno(texto).reshape(1, -1)
+        return _normalizar(self._verificar_dims(arr))[0]
+
+    # Mismo guard que ApiEmbedder: si el proveedor ignora `dimensions` y devuelve
+    # su tamaño nativo, la firma diría 256 mientras los vectores tienen 1024.
+    _verificar_dims = ApiEmbedder._verificar_dims
+
+
+# --------------------------------------------------------------------------- #
 # Selección
 # --------------------------------------------------------------------------- #
 def get_embedder(proveedor: str | None = None) -> Embedder:
     """Devuelve el embebedor configurado.
 
-    `proveedor`: api|local|fake|auto (o PRECIOVIVO_EMBED_PROVIDER; default auto).
+    `proveedor`: api|bedrock|local|fake|auto (o PRECIOVIVO_EMBED_PROVIDER;
+    default auto).
 
     En modo auto se elige API si hay clave, si no local. NO cae a fake en
     silencio: un índice construido con vectores de juguete parece funcionar y
@@ -444,6 +570,8 @@ def get_embedder(proveedor: str | None = None) -> Embedder:
         return FakeEmbedder()
     if proveedor == "api":
         return ApiEmbedder()
+    if proveedor == "bedrock":
+        return BedrockEmbedder()
     if proveedor == "local":
         return LocalEmbedder()
     if proveedor != "auto":

@@ -7,9 +7,10 @@ EventBridge Scheduler  dispara a las 08:00 de Lima. Zona horaria nativa: no se
                        explicando la resta.
 Step Functions         encadena los pasos. Standard y no Express, porque Express
                        corta a los 5 minutos.
-5 Lambdas              cosecha, listado, un trabajador por producto, reducción y
-                       export. Están separadas porque sus dependencias, su
-                       duración y su política de reintentos son distintas.
+6 Lambdas              cosecha, contraste SISAP, listado, un trabajador por
+                       producto, reducción y export. Están separadas porque sus
+                       dependencias, su duración y su política de reintentos son
+                       distintas.
 S3                     el bucket de la Fase 1, con prefijo `estado/`. No hace
                        falta uno nuevo: el export tiene que escribir ahí de todos
                        modos, así que el acoplamiento ya existía.
@@ -69,6 +70,7 @@ from constructs import Construct
 PREFIJO_ESTADO = "estado/"
 CLAVE_DB = PREFIJO_ESTADO + "preciovivo.db"
 CLAVE_CACHE = PREFIJO_ESTADO + "forecast_cache.json"
+CLAVE_SISAP = PREFIJO_ESTADO + "sisap_check.json"
 CLAVE_SNAPSHOT = "snapshot.json"
 
 # Lambda asigna una vCPU completa alrededor de los 1.769 MB. Por debajo, el GBM
@@ -87,6 +89,7 @@ class Fase3Stack(Stack):
             "BUCKET_ESTADO": bucket.bucket_name,
             "CLAVE_DB": CLAVE_DB,
             "CLAVE_CACHE_FORECAST": CLAVE_CACHE,
+            "CLAVE_SISAP": CLAVE_SISAP,
         }
 
         def nueva_fn(nombre, paquete, handler, memoria, segundos, entorno=None):
@@ -119,6 +122,10 @@ class Fase3Stack(Stack):
         fn_ingesta = nueva_fn("Ingesta", "ingesta", "ingesta.handler",
                               1024, 600, {"DIAS_A_COSECHAR": "5"})
 
+        # Mismo paquete que la cosecha (requests + pdfplumber): SISAP también
+        # baja un PDF y lo parsea. Otra función, no otro paquete.
+        fn_sisap = nueva_fn("Sisap", "ingesta", "sisap_lambda.handler", 1024, 300)
+
         fn_listar = nueva_fn("ForecastListar", "forecast",
                              "forecast_lambda.listar", 1024, 120)
 
@@ -134,6 +141,27 @@ class Fase3Stack(Stack):
                               "CLAVE_SNAPSHOT": CLAVE_SNAPSHOT})
 
         # --- IAM: una sentencia por necesidad real --------------------------
+        #
+        # POR QUÉ HAY UN ListBucket AQUÍ, que parece contradecir todo lo anterior
+        # ----------------------------------------------------------------------
+        # Sin `s3:ListBucket`, S3 responde AccessDenied —no NoSuchKey— cuando el
+        # objeto NO EXISTE. Lo hace a propósito: sin permiso de listar, decir
+        # "no existe" ya revelaría información sobre el contenido del bucket.
+        #
+        # La consecuencia es que el código que distingue "todavía no está" de
+        # "no puedo leerlo" deja de funcionar. Pasó de verdad: `bajar_sisap()`
+        # capturaba NoSuchKey, recibió AccessDenied y tumbó la ejecución entera
+        # el primer día en que el contraste no existía.
+        #
+        # Se concede acotado por prefijo: solo permite listar bajo `estado/`, que
+        # es donde vive el estado del pipeline. No da acceso al bucket entero ni
+        # al snapshot publicado.
+        listar_estado = iam.PolicyStatement(
+            actions=["s3:ListBucket"],
+            resources=[bucket.bucket_arn],
+            conditions={"StringLike": {"s3:prefix": [PREFIJO_ESTADO + "*"]}},
+        )
+
         # Ninguna función recibe el bucket entero. `grant_read`/`grant_write` de
         # CDK conceden familias completas (GetObject*, GetBucket*, List*), y aquí
         # se sabe exactamente qué objeto toca cada paso.
@@ -153,6 +181,17 @@ class Fase3Stack(Stack):
                 resources=[bucket.arn_for_objects(CLAVE_DB)],
             ))
 
+        # Todas las que consultan un objeto que PUEDE no existir todavía.
+        for fn in (fn_ingesta, fn_sisap, fn_export):
+            fn.add_to_role_policy(listar_estado)
+
+        # SISAP ingesta AVES (escribe la BD) y publica el contraste.
+        fn_sisap.add_to_role_policy(iam.PolicyStatement(
+            actions=["s3:GetObject", "s3:PutObject"],
+            resources=[bucket.arn_for_objects(CLAVE_DB),
+                       bucket.arn_for_objects(CLAVE_SISAP)],
+        ))
+
         # La reducción escribe el caché del forecast y el historial de
         # pronósticos (que va dentro de la BD).
         fn_reducir.add_to_role_policy(iam.PolicyStatement(
@@ -165,7 +204,8 @@ class Fase3Stack(Stack):
         fn_export.add_to_role_policy(iam.PolicyStatement(
             actions=["s3:GetObject"],
             resources=[bucket.arn_for_objects(CLAVE_DB),
-                       bucket.arn_for_objects(CLAVE_CACHE)],
+                       bucket.arn_for_objects(CLAVE_CACHE),
+                       bucket.arn_for_objects(CLAVE_SISAP)],
         ))
         fn_export.add_to_role_policy(iam.PolicyStatement(
             actions=["s3:PutObject"],
@@ -191,6 +231,15 @@ class Fase3Stack(Stack):
                    "es la firma de un cambio de layout. Ver ingesta.mensajes en "
                    "la entrada de este estado."),
         )
+
+        paso_sisap = tareas.LambdaInvoke(
+            self, "ContrastarSisap",
+            lambda_function=fn_sisap,
+            payload_response_only=True,
+            result_path="$.sisap",
+        )
+        paso_sisap.add_retry(errors=["States.ALL"], max_attempts=2,
+                             interval=Duration.seconds(10), backoff_rate=2.0)
 
         paso_listar = tareas.LambdaInvoke(
             self, "ListarProductos",
@@ -264,9 +313,18 @@ class Fase3Stack(Stack):
             sfn.Condition.boolean_equals("$.ingesta.fallo_de_compuerta", True),
             compuerta_rota,
         )
+        # SISAP NO puede tumbar la publicación: los precios del 335 ya están
+        # cargados y el sitio tiene que salir igual, solo que sin el bloque de
+        # verificación. El Catch salta al siguiente paso y deja el error en
+        # `$.sisapError`, donde queda visible en el historial de la ejecución
+        # —a diferencia del Write-Warning del script de Windows, que se lo
+        # llevaba una consola que nadie mira.
+        paso_sisap.add_catch(paso_listar, errors=["States.ALL"],
+                             result_path="$.sisapError")
+
         decision.otherwise(
-            paso_listar.next(mapa).next(paso_reducir).next(paso_export)
-            .next(sfn.Succeed(self, "Publicado"))
+            paso_sisap.next(paso_listar).next(mapa).next(paso_reducir)
+            .next(paso_export).next(sfn.Succeed(self, "Publicado"))
         )
 
         maquina = sfn.StateMachine(
@@ -300,7 +358,7 @@ class Fase3Stack(Stack):
             flexible_time_window={"mode": "OFF"},
             # 08:00 de Lima. EventBridge Scheduler entiende la zona, así que no
             # hay una resta a UTC escrita a mano que alguien tenga que revisar.
-            schedule_expression="cron(0 8 * * ? *)",
+            schedule_expression="cron(0 8 ? * MON-FRI *)",
             schedule_expression_timezone="America/Lima",
             description="Precio Vivo: cosecha, pronostica y publica el snapshot",
             target=scheduler.CfnSchedule.TargetProperty(
@@ -309,14 +367,30 @@ class Fase3Stack(Stack):
                 input=json.dumps({"dias": 5}),
             ),
         )
-        # Todos los días, también sábado y domingo. Un día sin reporte nuevo es un
-        # no-op que termina en verde, y `--latest 5` hace que la tubería se cure
-        # sola: si un día falla, el siguiente recupera lo que faltaba. Programarla
-        # solo de lunes a viernes ahorraría dos ejecuciones vacías al mes y
-        # perdería esa propiedad.
+        # LUNES A VIERNES, y el motivo es el costo, no el calendario.
+        #
+        # El Map genera ~2 transiciones por producto: con 73 productos son ~154
+        # por corrida. La capa gratuita de Step Functions son 4.000 transiciones
+        # al mes, perpetuas.
+        #
+        #     30 corridas x 154 = 4.620  ->  620 de más  ->  ~0,015 USD/mes
+        #     22 corridas x 154 = 3.388  ->  dentro de la capa gratuita
+        #
+        # Antes esto corría todos los días, y el argumento era bueno: un día sin
+        # reporte es un no-op en verde, y correr también en fin de semana daba la
+        # propiedad de que el sábado recogiera un 335 publicado tarde el viernes.
+        #
+        # Se cambia porque el requisito es gasto CERO, no gasto bajo. Y lo que se
+        # pierde es acotado: `--latest 5` sigue curando la tubería sola, así que
+        # un reporte publicado el viernes por la noche entra el lunes. El costo
+        # real es un fin de semana de datos viejos en el sitio, no un dato perdido.
+        #
+        # El día que el gasto deje de ser cero, volver a diario es cambiar cinco
+        # caracteres.
 
         CfnOutput(self, "MaquinaDeEstados", value=maquina.state_machine_arn)
         CfnOutput(self, "FnIngesta", value=fn_ingesta.function_name)
+        CfnOutput(self, "FnSisap", value=fn_sisap.function_name)
         CfnOutput(self, "FnListar", value=fn_listar.function_name)
         CfnOutput(self, "FnProducto", value=fn_producto.function_name)
         CfnOutput(self, "FnReducir", value=fn_reducir.function_name)

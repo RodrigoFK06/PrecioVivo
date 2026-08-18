@@ -1,3 +1,7 @@
+# boto3: SOLO para el embebedor de Bedrock (BedrockEmbedder). No se empaqueta en
+# las Lambdas porque el runtime ya lo trae; se pinea aquí para que el pipeline
+# local pueda construir el índice con las mismas credenciales de AWS.
+boto3==1.43.74
 holidays==0.99
 numpy==2.5.0
 openai==2.43.0

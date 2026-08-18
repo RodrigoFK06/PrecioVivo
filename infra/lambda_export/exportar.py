@@ -64,6 +64,12 @@ def handler(_event, _context):
             f"{estado_s3.CLAVE_CACHE}. Sin él, export recalcularía el GBM entero "
             "(~31 min) dentro de una Lambda de 15. Corre antes el paso de forecast.")
 
+    # El contraste con SISAP es ADITIVO: si no está, el snapshot sale sin el
+    # bloque `verificacion` y el dashboard lo ignora. Por eso no se exige, a
+    # diferencia del caché del forecast — ahí faltar significa 31 minutos de
+    # recálculo dentro de una Lambda de 15, aquí solo significa un bloque menos.
+    hay_sisap = estado_s3.bajar_sisap()
+
     datos = E.build(estado_s3.RUTA_DB)
     cuerpo = json.dumps(datos, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     _s3.put_object(Bucket=BUCKET_SNAPSHOT, Key=CLAVE_SNAPSHOT, Body=cuerpo,
@@ -78,6 +84,12 @@ def handler(_event, _context):
         # Si el forecast falló por dentro, export lo deja aquí en vez de caerse.
         # Se sube al resultado para que no se pierda en un log que nadie mira.
         "error_forecast": meta.get("error"),
+        "sisap_disponible": hay_sisap,
+        # `vigente` dice si el contraste corresponde al último día del snapshot.
+        # Un check viejo se muestra como histórico, no como de hoy — y aquí se
+        # sube al resultado para que un contraste que dejó de estar vigente sea
+        # visible en la ejecución y no solo dentro del JSON.
+        "verificacion_vigente": (datos.get("verificacion") or {}).get("vigente"),
         "productos_con_forecast": sum(
             1 for p in datos.get("productos", []) if p.get("forecast")),
         "ms": round((time.perf_counter() - t0) * 1000),
