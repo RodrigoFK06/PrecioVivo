@@ -1,0 +1,13 @@
+{
+  "app": ".venv\\Scripts\\python.exe app.py",
+  "watch": {
+    "exclude": [
+      "build/**",
+      "**/__pycache__/**"
+    ]
+  },
+  "context": {
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/core:checkSecretUsage": true
+  }
+}
