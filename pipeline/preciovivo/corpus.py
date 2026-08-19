@@ -59,6 +59,12 @@ TIPO_PRODUCTO_PERIODO = "producto-periodo"
 TIPO_PRODUCTO_PERFIL = "producto-perfil"
 TIPO_EVENTO_ANOMALIA = "evento-anomalia"
 TIPO_MERCADO_DIA = "mercado-dia"
+# Los mercados que NO son el GMML: pollo vivo (AVES, vía SISAP) y lo que llegue
+# por el boletín. Van en su propio tipo y no mezclados con los del GMML porque
+# no son comparables: otra fuente, otra jornada y, en el caso de las aves, otra
+# unidad de negocio. Un chunk POR PRODUCTO, no por mercado, para que el
+# pre-filtro estructurado por slug pueda alcanzarlos.
+TIPO_OTRO_MERCADO = "otro-mercado-dia"
 
 GRANULARIDADES = ("dia", "semana", "mes")
 GRANULARIDAD_DEFAULT = "semana"
@@ -519,6 +525,40 @@ def _texto_evento_anomalia(a: dict, contexto: str | None, mercado: str) -> str:
     return "\n".join(lineas)
 
 
+def _texto_otro_mercado(prod: dict, nombre_mercado: str,
+                        codigo: str | None, fecha: str) -> str:
+    """Un producto de un mercado distinto del GMML, en su último día publicado.
+
+    El aviso final NO es decorativo. Estos precios conviven en el mismo índice
+    que los del GMML y un modelo que los mezcle produciría comparaciones falsas:
+    el pollo vivo se mide por kilo vivo en pie, no por kilo de producto en un
+    puesto mayorista de hortalizas. Decirlo en el propio chunk es más fiable que
+    confiar en que el prompt del sistema lo recuerde en cada respuesta.
+
+    Sin serie: `export._add_mercados` solo publica el último día de cada mercado,
+    así que aquí no hay histórico que ofrecer y no se finge que lo haya.
+    """
+    nombre = prod.get("nombre") or prod.get("slug")
+    precio = prod.get("precio_kg")
+    var = prod.get("var_pct")
+
+    partes = [f"{nombre} ({prod.get('slug')}) · {nombre_mercado}"
+              + (f" [{codigo}]" if codigo else "") + f" · {_fecha_larga(fecha)}."]
+    if precio is not None:
+        partes.append(f"Precio: {_soles(precio)} por kilogramo.")
+    else:
+        partes.append("Sin precio publicado ese día.")
+    if var is not None:
+        # `_pct` antepone el signo, así que combinarlo con el verbo producía
+        # "Bajó +8.2%". Se usa el valor con su signo y sin verbo redundante.
+        partes.append(f"Variación respecto al día anterior: {_pct(var)}.")
+    partes.append(
+        f"{nombre_mercado} es un mercado DISTINTO del Gran Mercado Mayorista de "
+        f"Lima: sus precios no son directamente comparables con los de las "
+        f"hortalizas del GMML, y solo se publica el último día disponible.")
+    return " ".join(partes)
+
+
 def _texto_mercado_dia(
     fecha: str, mercado: str, filas: list[dict], anomalias_dia: list[dict],
 ) -> str:
@@ -615,7 +655,7 @@ def build_corpus(
         raise ValueError(f"granularidad debe ser una de {GRANULARIDADES}")
     tipos = set(incluir) if incluir is not None else {
         TIPO_PRODUCTO_PERIODO, TIPO_PRODUCTO_PERFIL,
-        TIPO_EVENTO_ANOMALIA, TIPO_MERCADO_DIA,
+        TIPO_EVENTO_ANOMALIA, TIPO_MERCADO_DIA, TIPO_OTRO_MERCADO,
     }
 
     snap = cargar_snapshot(origen)
@@ -709,6 +749,36 @@ def build_corpus(
                 fecha_inicio=fecha, fecha_fin=fecha,
             ))
 
+    # --- otro-mercado-dia -------------------------------------------------
+    # POR QUÉ EXISTE ESTE BLOQUE
+    # El snapshot trae `mercados` desde que se ingesta SISAP, el dashboard lo
+    # muestra, y sin embargo el corpus no lo miraba. Consecuencia medida en
+    # producción: a "¿cómo va el pollo vivo?" el asistente respondía "no figura
+    # entre los productos que seguimos" — con el dato delante, en el mismo JSON.
+    #
+    # Eso es peor que un "no sé": es una negación afirmada como hecho. Y era un
+    # empeoramiento causado por mejorar: el peldaño de catálogo SÍ incluía estos
+    # productos, pero el RAG gana y nunca le cede el turno.
+    if TIPO_OTRO_MERCADO in tipos:
+        for m in snap.get("mercados") or []:
+            fecha = m.get("latestFecha")
+            nombre_mercado = m.get("nombre") or m.get("codigo") or "otro mercado"
+            if not fecha:
+                continue
+            for prod in m.get("productos") or []:
+                slug = prod.get("slug")
+                if not slug:
+                    continue
+                chunks.append(Chunk(
+                    id=f"{TIPO_OTRO_MERCADO}:{m.get('codigo')}:{slug}:{fecha}",
+                    tipo=TIPO_OTRO_MERCADO,
+                    texto=_texto_otro_mercado(prod, nombre_mercado,
+                                              m.get("codigo"), fecha),
+                    slug=slug, producto=prod.get("nombre"),
+                    mercado=nombre_mercado,
+                    fecha_inicio=fecha, fecha_fin=fecha,
+                ))
+
     # --- mercado-dia ------------------------------------------------------
     if TIPO_MERCADO_DIA in tipos:
         por_dia: dict[str, list[dict]] = {}
@@ -769,7 +839,7 @@ def main() -> None:
     print("--- muestra (granularidad=semana) ---")
     ejemplo = build_corpus(snap, granularidad="semana")
     for tipo in (TIPO_PRODUCTO_PERIODO, TIPO_PRODUCTO_PERFIL,
-                 TIPO_EVENTO_ANOMALIA, TIPO_MERCADO_DIA):
+                 TIPO_EVENTO_ANOMALIA, TIPO_MERCADO_DIA, TIPO_OTRO_MERCADO):
         c = next((x for x in ejemplo if x.tipo == tipo), None)
         if c:
             print(f"\n[{c.id}]\n{c.texto}")

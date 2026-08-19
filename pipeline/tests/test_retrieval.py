@@ -407,3 +407,50 @@ def test_no_avisa_cuando_si_hay_producto(recuperador):
     ctx = recuperador.recuperar("¿cuánto cuesta la papa blanca?", k=5)
     assert ctx.consulta.slugs
     assert "=== AVISO ===" not in ctx.a_prompt()
+
+
+# --------------------------------------------------------------------------- #
+# El catálogo cubre lo que el snapshot publica, no solo el GMML
+# --------------------------------------------------------------------------- #
+def test_catalogo_incluye_otros_mercados():
+    """`detectar_productos` decide con este catálogo si la pregunta nombra algo.
+
+    Cuando solo traía los del GMML, "pollo vivo" no identificaba producto, se
+    disparaba el aviso de "no está en el catálogo" y el modelo respondía que no
+    lo seguíamos. El arreglo no es de prompt: es que el catálogo describa lo que
+    el producto realmente cubre.
+    """
+    from preciovivo.retrieval import catalogo_de, detectar_productos
+
+    snap = {
+        "productos": [{"slug": "papa-blanca", "nombre": "Papa Blanca"}],
+        "mercados": [{
+            "codigo": "AVES", "nombre": "Mercado de Aves",
+            "productos": [{"slug": "pollo-vivo", "nombre": "Pollo Vivo"}],
+        }],
+    }
+    cat = catalogo_de(snap)
+    assert cat == {"papa-blanca": "Papa Blanca", "pollo-vivo": "Pollo Vivo"}
+    assert detectar_productos("como va el pollo vivo?", cat) == frozenset({"pollo-vivo"})
+    # Y no rompe la detección de siempre.
+    assert detectar_productos("precio de la papa blanca", cat) == frozenset({"papa-blanca"})
+
+
+def test_catalogo_da_prioridad_al_gmml_ante_slug_repetido():
+    """Si un slug coincidiera entre mercados manda el del GMML, que es el que
+    tiene serie histórica que ofrecer."""
+    from preciovivo.retrieval import catalogo_de
+
+    snap = {
+        "productos": [{"slug": "tomate", "nombre": "Tomate"}],
+        "mercados": [{"codigo": "X", "nombre": "Otro",
+                      "productos": [{"slug": "tomate", "nombre": "Tomate Importado"}]}],
+    }
+    assert catalogo_de(snap)["tomate"] == "Tomate"
+
+
+def test_catalogo_sin_mercados_es_el_de_siempre():
+    from preciovivo.retrieval import catalogo_de
+
+    snap = {"productos": [{"slug": "papa-blanca", "nombre": "Papa Blanca"}]}
+    assert catalogo_de(snap) == {"papa-blanca": "Papa Blanca"}

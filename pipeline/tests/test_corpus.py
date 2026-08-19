@@ -241,3 +241,83 @@ def test_cargar_snapshot_acepta_dict_y_ruta(tmp_path, snapshot_sintetico):
 def test_cargar_snapshot_rechaza_tipos_raros():
     with pytest.raises(TypeError):
         C.cargar_snapshot(42)
+
+
+# --------------------------------------------------------------------------- #
+# Otros mercados (pollo vivo vía SISAP, frutas del boletín)
+# --------------------------------------------------------------------------- #
+def _con_mercados(snap: dict) -> dict:
+    """El snapshot sintético más un mercado no-GMML, como lo publica `export`."""
+    s = dict(snap)
+    s["mercados"] = [{
+        "codigo": "AVES", "nombre": "Mercado de Aves",
+        "latestFecha": "2026-08-19",
+        "productos": [{"nombre": "Pollo Vivo", "slug": "pollo-vivo",
+                       "precio_kg": 4.5, "var_pct": -8.2}],
+    }]
+    return s
+
+
+def test_otros_mercados_producen_chunk(snapshot_sintetico):
+    """El caso que motivó este tipo de chunk.
+
+    En producción, "¿cómo va el pollo vivo?" recibía "no figura entre los
+    productos que seguimos" — con el precio en el mismo snapshot y pintado en el
+    dashboard. Una negación afirmada como hecho es peor que un "no sé".
+    """
+    chunks = C.build_corpus(_con_mercados(snapshot_sintetico), "semana")
+    otros = [c for c in chunks if c.tipo == C.TIPO_OTRO_MERCADO]
+    assert len(otros) == 1
+    c = otros[0]
+    assert c.slug == "pollo-vivo"
+    assert c.producto == "Pollo Vivo"
+    assert c.mercado == "Mercado de Aves"
+    assert c.fecha_inicio == c.fecha_fin == "2026-08-19"
+    assert "4.50" in c.texto
+
+
+def test_otro_mercado_avisa_de_que_no_es_el_gmml(snapshot_sintetico):
+    """Estos precios conviven en el mismo índice que los del GMML.
+
+    Sin el aviso dentro del propio chunk, un modelo podría compararlos: el pollo
+    vivo se mide por kilo en pie, no por kilo de hortaliza en un puesto
+    mayorista. Decirlo en el texto es más fiable que confiar en que el prompt lo
+    recuerde en cada respuesta.
+    """
+    chunks = C.build_corpus(_con_mercados(snapshot_sintetico), "semana")
+    texto = next(c.texto for c in chunks if c.tipo == C.TIPO_OTRO_MERCADO)
+    assert "DISTINTO" in texto
+    assert "Gran Mercado Mayorista" in texto
+
+
+def test_variacion_no_contradice_su_signo(snapshot_sintetico):
+    """Regresión: la primera versión imprimía "Bajó +8.2%".
+
+    El formateador de porcentaje antepone el signo, así que combinarlo con un
+    verbo derivado del mismo número producía una contradicción en el texto que
+    el modelo iba a leer.
+    """
+    chunks = C.build_corpus(_con_mercados(snapshot_sintetico), "semana")
+    texto = next(c.texto for c in chunks if c.tipo == C.TIPO_OTRO_MERCADO)
+    assert "-8.2%" in texto
+    assert "Bajó +" not in texto and "Subió -" not in texto
+
+
+def test_sin_mercados_no_rompe_ni_anade_chunks(snapshot_sintetico):
+    """El bloque es aditivo: un snapshot viejo sin `mercados` sigue funcionando."""
+    sin = {k: v for k, v in snapshot_sintetico.items() if k != "mercados"}
+    chunks = C.build_corpus(sin, "semana")
+    assert not [c for c in chunks if c.tipo == C.TIPO_OTRO_MERCADO]
+
+
+def test_otros_mercados_no_alteran_los_chunks_del_gmml(snapshot_sintetico):
+    """Añadir un mercado no puede cambiar un solo chunk del GMML.
+
+    Si los tocara, el corpus histórico dejaría de ser inmutable y habría que
+    reindexar los 9.000 chunks en vez de los nuevos.
+    """
+    antes = C.build_corpus(snapshot_sintetico, "semana")
+    despues = C.build_corpus(_con_mercados(snapshot_sintetico), "semana")
+    otros = {c.id for c in despues if c.tipo == C.TIPO_OTRO_MERCADO}
+    assert {c.id: c.texto for c in antes} == {
+        c.id: c.texto for c in despues if c.id not in otros}

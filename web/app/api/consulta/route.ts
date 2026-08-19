@@ -392,7 +392,16 @@ async function contextoDe(
   const remoto = await recuperarViaApi(q);
   if (remoto) return { contexto: remoto.prompt, motor: "api" };
 
-  const catalogo = Object.fromEntries(snap.productos.map((p) => [p.slug, p.nombre]));
+  // Los extras van en el catálogo del RAG, no solo en el del peldaño de abajo.
+  // El comentario de `extrasDe` ya lo advertía y el peldaño de catálogo lo
+  // cumplía; el del RAG no, así que al mejorar la recuperación esta clase de
+  // pregunta EMPEORÓ: el peldaño bueno gana y nunca cede al que tenía el dato.
+  // Medido en producción: "¿cómo va el pollo vivo?" respondía que no lo
+  // seguimos, con el precio en el mismo JSON. Espejo de `retrieval.catalogo_de`.
+  const catalogo = Object.fromEntries([
+    ...snap.productos.map((p) => [p.slug, p.nombre]),
+    ...extrasDe(snap).map((p) => [p.slug, p.nombre]),
+  ]);
   const ctx = await recuperar(q, catalogo, snap.latestFecha ?? null);
   // Sin contexto recuperado no hay nada que RAG aporte sobre el camino normal.
   if (ctx.degradado && !ctx.piso.length) return null;

@@ -135,6 +135,34 @@ def _tokens_significativos(nombre: str) -> list[str]:
             if len(t) > 2 and t not in _PALABRAS_VACIAS]
 
 
+def catalogo_de(snap: dict) -> dict[str, str]:
+    """{slug: nombre} de TODO lo que el snapshot publica con precio.
+
+    Los 72 del GMML más los de `mercados` — hoy el pollo vivo que llega por
+    SISAP, mañana lo que traiga el boletín.
+
+    POR QUÉ IMPORTA QUE ESTÉN LOS DOS
+    ---------------------------------
+    Este catálogo es lo que `detectar_productos` usa para decidir si la pregunta
+    nombra algo del inventario. Cuando solo traía los del GMML, "¿cómo va el
+    pollo vivo?" no identificaba producto, se disparaba el AVISO de "no está en
+    el catálogo" y el modelo respondía que no lo seguíamos — con el precio en el
+    mismo JSON y pintado en el dashboard.
+
+    Una negación afirmada como hecho es peor que un "no sé", así que la
+    corrección no es de prompt: es que el catálogo describa lo que el producto
+    realmente cubre.
+    """
+    catalogo = {p["slug"]: p["nombre"] for p in snap.get("productos") or []}
+    for m in snap.get("mercados") or []:
+        for prod in m.get("productos") or []:
+            if prod.get("slug") and prod.get("nombre"):
+                # `setdefault`: si un slug coincidiera entre mercados, manda el
+                # del GMML, que es el que tiene serie histórica.
+                catalogo.setdefault(prod["slug"], prod["nombre"])
+    return catalogo
+
+
 def detectar_productos(pregunta: str, catalogo: dict[str, str]) -> frozenset[str]:
     """Productos mencionados en la pregunta. `catalogo`: {slug: nombre}.
 
@@ -486,7 +514,7 @@ class Recuperador:
         # distinta) y todo sigue igual de instantáneo.
         idx.construir(chunks, embed_con_cache(chunks, emb),
                       granularidad, emb.firma)
-        catalogo = {p["slug"]: p["nombre"] for p in snap.get("productos") or []}
+        catalogo = catalogo_de(snap)
         return cls(chunks, idx, emb, catalogo, snap.get("latestFecha"))
 
     @classmethod
@@ -531,7 +559,7 @@ class Recuperador:
             granularidad=alguna.get("granularidad", GRANULARIDAD_DEFAULT),
             n_chunks=len(chunks), huella_corpus=alguna.get("huella_corpus", ""),
             construido_en=alguna.get("construido_en", ""))
-        catalogo = {p["slug"]: p["nombre"] for p in snap.get("productos") or []}
+        catalogo = catalogo_de(snap)
         return cls(chunks, idx, emb, catalogo, snap.get("latestFecha"))
 
     # --- piso determinista ------------------------------------------------
