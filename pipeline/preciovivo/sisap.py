@@ -34,8 +34,17 @@ import re
 import unicodedata
 from datetime import date, datetime, timezone
 
-import pdfplumber
-import requests
+# `pdfplumber` y `requests` se importan PEREZOSAMENTE donde se usan, no aquí.
+#
+# El motivo no es el tiempo de arranque: es que `load_check()` solo lee un JSON
+# y no tiene por qué exigir un parser de PDF. La Lambda de export lleva numpy y
+# holidays, no pdfplumber, y al importar este módulo para leer el contraste
+# fallaba con ModuleNotFoundError. `_add_verificacion` lo capturaba —es aditivo,
+# no debe tumbar el snapshot— así que el sitio se quedaba sin el bloque
+# `verificacion` con un error escondido en una clave que nadie miraba.
+#
+# Empaquetar pdfplumber en el export habría funcionado: 27 MB para una función
+# que jamás abre un PDF. Esto cuesta dos líneas.
 
 SISAP_URL = ("http://sistemas.midagri.gob.pe/sisap/intranet/mayoristas_lima/"
              "modulos/reporte_precios.pdf")
@@ -81,8 +90,34 @@ MESES = {
 
 _NUM_RE = re.compile(r"^-?\d+(?:[.,]\d+)?$")
 
-_session = requests.Session()
-_session.headers["User-Agent"] = UA
+_session = None
+
+
+def _erroresRed():
+    """La familia de errores de `requests`, resuelta en tiempo de uso.
+
+    Un `except requests.RequestException` en el cuerpo obligaría a importar
+    requests al cargar el módulo, que es justo lo que se quiere evitar.
+    """
+    import requests
+
+    return requests.RequestException
+
+
+def _sesion():
+    """La sesión HTTP, creada al primer uso.
+
+    Antes era una constante de módulo, y eso obligaba a que `import requests`
+    ocurriera solo por importar este archivo — aunque quien lo importara solo
+    quisiera `load_check()`, que lee un JSON de disco.
+    """
+    global _session
+    if _session is None:
+        import requests
+
+        _session = requests.Session()
+        _session.headers["User-Agent"] = UA
+    return _session
 
 
 # --- helpers -------------------------------------------------------------
@@ -152,11 +187,11 @@ def fetch_sisap(out_dir: str | None = None) -> tuple[str, str, int]:
     out_dir = out_dir or RAW_DIR
     for k in range(3):
         try:
-            r = _session.get(SISAP_URL, timeout=60)
+            r = _sesion().get(SISAP_URL, timeout=60)
             r.raise_for_status()
             data = r.content
             break
-        except requests.RequestException:
+        except _erroresRed():
             if k == 2:
                 raise
     if data[:5] != b"%PDF-":
@@ -167,6 +202,8 @@ def fetch_sisap(out_dir: str | None = None) -> tuple[str, str, int]:
     tmp = os.path.join(out_dir, "sisap_tmp.pdf")
     with open(tmp, "wb") as f:
         f.write(data)
+    import pdfplumber
+
     with pdfplumber.open(tmp) as pdf:
         fecha = _extract_fecha(pdf.pages[0])
     stamp = fecha.isoformat() if fecha else "unknown"
@@ -183,6 +220,8 @@ def parse_sisap(pdf_path: str) -> list[dict]:
                 prom_7d, fecha}. Prices are already S/ por Kg (no conversion).
     """
     out: list[dict] = []
+    import pdfplumber
+
     with pdfplumber.open(pdf_path) as pdf:
         page = pdf.pages[0]
         fecha = _extract_fecha(page)

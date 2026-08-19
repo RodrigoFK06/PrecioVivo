@@ -246,3 +246,37 @@ def test_export_en_postgres_da_el_mismo_snapshot_que_sqlite(tmp_path, make_row, 
     for p in snap_pg["productos"]:
         assert isinstance(p["latest"]["fecha"], str)
         assert all(isinstance(pt["fecha"], str) for pt in p["series"])
+
+
+def test_leer_el_contraste_no_exige_el_parser_de_pdf():
+    """`load_check` solo lee un JSON: no puede arrastrar pdfplumber ni requests.
+
+    Regresión real. La Lambda de export lleva numpy y holidays, no pdfplumber.
+    `_add_verificacion` importaba `sisap` para leer el contraste, el import
+    fallaba con ModuleNotFoundError, y como el bloque es ADITIVO el except lo
+    capturaba y seguía. Resultado: el snapshot salía sin `verificacion` y el
+    motivo quedaba en una clave `verificacionError` que nadie miraba.
+
+    Empaquetar pdfplumber en el export lo habría tapado: 27 MB para una función
+    que jamás abre un PDF.
+    """
+    import subprocess
+    import sys
+    import textwrap
+
+    # En un intérprete aparte, con ambos módulos bloqueados: importarlos lanza.
+    guion = textwrap.dedent("""
+        import sys
+        class Bloqueado:
+            def find_module(self, nombre, ruta=None):
+                return self if nombre in ("pdfplumber", "requests") else None
+            def load_module(self, nombre):
+                raise ImportError(f"{nombre} no está instalado (simulado)")
+        sys.meta_path.insert(0, Bloqueado())
+        from preciovivo.sisap import load_check
+        assert callable(load_check)
+        print("OK")
+    """)
+    r = subprocess.run([sys.executable, "-c", guion], capture_output=True, text=True)
+    assert r.returncode == 0 and "OK" in r.stdout, (
+        f"importar sisap sin pdfplumber/requests falló:\n{r.stderr[-800:]}")
