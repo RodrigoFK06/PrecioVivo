@@ -1,3 +1,20 @@
+# ===========================================================================
+# SUPERADO. Ya no lo ejecuta ninguna tarea programada.
+#
+# Todo lo que hace este script vive ahora en AWS (Step Functions, lunes a
+# viernes 08:00 Lima; ver docs/aws.md) MENOS el contraste con SISAP, porque
+# sistemas.midagri.gob.pe no acepta conexiones desde AWS. Medido:
+#     desde esta maquina   200, 337.994 bytes, 0,3 s
+#     desde Lambda         ConnectTimeout a los 60 s
+#
+# Esa unica pieza quedo en scripts/sisap-diario.ps1, que es a lo que apunta
+# ahora la tarea PrecioVivo-Diario (07:30, antes de que arranque AWS).
+#
+# Se conserva porque documenta el pipeline completo en un solo archivo legible y
+# porque sigue sirviendo para correr todo a mano si AWS estuviera caido. NO lo
+# programes: publicaria en el mismo repositorio que la tuberia de AWS y los dos
+# se pisarian.
+# ===========================================================================
 # Precio Vivo - actualizacion diaria.
 # Descarga el reporte del dia, recalcula el pronostico y publica el snapshot
 # (git push -> Vercel redeploya). Programar con el Programador de tareas de
