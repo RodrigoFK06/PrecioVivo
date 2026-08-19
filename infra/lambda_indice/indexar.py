@@ -79,7 +79,15 @@ def _clave_api() -> str:
     infraestructura acaba en el repositorio, en el historial de CloudFormation y
     en los logs de despliegue. Se crea una vez a mano y aquí solo se lee.
     """
-    r = _ssm.get_parameter(Name=PARAM_CLAVE_EMBED, WithDecryption=True)
+    try:
+        r = _ssm.get_parameter(Name=PARAM_CLAVE_EMBED, WithDecryption=True)
+    except _ssm.exceptions.ParameterNotFound:
+        raise RuntimeError(
+            f"falta el parámetro {PARAM_CLAVE_EMBED} (clave de embeddings de "
+            f"Jina). Se crea una vez con:\n"
+            f'    aws ssm put-parameter --name "{PARAM_CLAVE_EMBED}" '
+            f'--type SecureString --value "<clave>" --overwrite'
+        ) from None
     return r["Parameter"]["Value"]
 
 

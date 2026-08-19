@@ -63,6 +63,7 @@ REQUISITOS = {
     "export": ["numpy==2.5.0", "holidays==0.99"],
     # `openai` porque ApiEmbedder habla el dialecto OpenAI, y Jina lo implementa.
     "indice": ["numpy==2.5.0", "openai==2.43.0"],
+    "publicar": [],
     "sonda": ["requests==2.34.2"],
 }
 
@@ -119,6 +120,10 @@ def _activo(nombre: str) -> lambda_.Code:
     suelto que hay que ir a buscar.
     """
     reqs = " ".join(f"'{r}'" for r in REQUISITOS[nombre])
+    if not reqs:
+        # Sin dependencias no hay nada que instalar, y `pip install` sin paquetes
+        # falla. Se sube el directorio tal cual, que además evita levantar Docker.
+        return lambda_.Code.from_asset(str(BUILD / nombre))
     return lambda_.Code.from_asset(
         str(BUILD / nombre),
         bundling=BundlingOptions(
@@ -150,6 +155,9 @@ _ensamblar("ingesta", [AQUI / "lambda_ingesta" / "ingesta.py",
 _ensamblar("forecast", [AQUI / "lambda_forecast" / "forecast_lambda.py", _COMUN])
 _ensamblar("export", [AQUI / "lambda_export" / "exportar.py", _COMUN])
 _ensamblar("indice", [AQUI / "lambda_indice" / "indexar.py"])
+# Sin `preciovivo` y sin dependencias: la API de GitHub es HTTP con JSON y
+# `urllib` de la estándar basta. El zip son unos kilobytes.
+_ensamblar("publicar", [AQUI / "lambda_publicar" / "publicar.py"], modulos=[])
 # La sonda del WAF lleva el harvester REAL, no una reimplementación: una sonda
 # con su propia versión de la cadena de peticiones no responde la pregunta.
 _ensamblar("sonda", [AQUI / "lambda_sonda" / "sonda.py", PAQUETE / "harvester.py"],
@@ -165,7 +173,8 @@ fase1 = Fase1Stack(
 Fase3Stack(
     app, "PrecioVivoFase3", env=entorno,
     bucket=fase1.bucket,
-    activos={n: _activo(n) for n in ("ingesta", "forecast", "export", "indice")},
+    activos={n: _activo(n)
+             for n in ("ingesta", "forecast", "export", "indice", "publicar")},
     description="Precio Vivo Fase 3: ingesta diaria con EventBridge Scheduler y Step Functions",
 )
 SondaWafStack(

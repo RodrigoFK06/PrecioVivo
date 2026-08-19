@@ -790,3 +790,240 @@ la base sin dejar rastro en ningún log. La subida va con `IfMatch` y el ETag qu
 leí, de modo que la segunda recibe un 412 y falla en rojo en vez de borrar el
 trabajo de la primera. Esto deja de valer el día que haya escritores concurrentes
 de verdad, y entonces la señal para migrar es clara: el primer 412 legítimo.
+
+---
+
+## Fase 3.5 — Cerrar los huecos: SISAP, índice RAG y publicación
+
+La Fase 3 dejaba la tubería produciendo un snapshot más fresco que el de la
+máquina de Windows pero **incompleto**: sin contraste SISAP, sin índice RAG y sin
+publicar. Esta fase añade los tres pasos que faltaban.
+
+```
+Cosechar → PasoLaCompuerta ─┬→ CompuertaDeEscritura (Fail)
+                            └→ ContrastarSisap ──[Catch]──┐
+                                     ↓                    │
+                               ListarProductos ←──────────┘
+                                     ↓
+                               PorProducto (Map ×8) → Reducir → Exportar
+                                     ↓
+                               IndexarRag ──[Catch]──┐
+                                     ↓               │
+                               PublicarEnGitHub ←────┘
+                                     ↓
+                                 Publicado
+```
+
+Tres Lambdas nuevas, todas dentro de la capa gratuita.
+
+| recurso | identificador |
+|---|---|
+| Lambda SISAP | `PrecioVivoFase3-Sisap39999EA4-fHPbt7FZzxBf` |
+| Lambda índice | `PrecioVivoFase3-Indice3E156E8A-gu8dc97YAqud` |
+| Lambda publicador | `PrecioVivoFase3-Publicar6CD92189-uHlWhpAE8v8l` |
+
+### SISAP: construido, desplegado, y sin acceso desde AWS
+
+El contraste con SISAP es lo que convierte "estos son los precios" en "estos son
+los precios y hay una segunda fuente que dice lo mismo". Sin él, el snapshot sale
+sin el bloque `verificacion`.
+
+El paso funciona. Lo que no funciona es la red:
+
+| desde | resultado |
+|---|---|
+| una máquina en Lima | **200**, 337.994 bytes, 0,3 s, PDF válido, Apache |
+| Lambda en us-east-1 | **ConnectTimeout** a los 60 s — no llega a abrir el TCP |
+
+`sistemas.midagri.gob.pe` no acepta conexiones desde AWS. Y aquí hay que anotar
+un fallo de método: la sonda de la Fase 3 probó `www.gob.pe` y de ahí se concluyó
+"la cosecha funciona desde Lambda". Había **dos** fuentes y se verificó una. El
+comentario de `actualizar-diario.ps1` avisaba de esto desde el principio.
+
+Consecuencia: la máquina de Lima **no se puede apagar del todo** mientras SISAP
+sea parte del producto. Las salidas, por orden de coste: probar otra región
+(São Paulo podría estar permitida, pero añade región y transferencia entre
+regiones), un proxy con IP peruana (cuesta), o dejar SISAP fuera de AWS.
+
+Mientras tanto el paso lleva `Catch`: falla, se registra en el historial de la
+ejecución, y la publicación sigue. En el script de Windows eso era un
+`Write-Warning` que se llevaba una consola que nadie mira.
+
+### El índice RAG y la trampa que se lleva la cuota por delante
+
+`main_index(solo_reciente=True)` **no embebe solo lo reciente**. Embebe el corpus
+entero y solo *escribe* la parte reciente. Lo que hace barata la corrida diaria
+no es el flag: es el **caché** de embeddings.
+
+En una Lambda `/tmp` se va con el contenedor. Sin traer el caché desde S3, cada
+corrida diaria habría embebido los 9.280 chunks: **~1,5 M tokens** de una cuota
+de 5,09 M. Tres días hasta quedarse sin nada, sin un solo error, porque
+técnicamente todo "funciona". Ese es el fallo que nadie encuentra: el que no
+falla.
+
+El caché viaja a S3 y vuelve. Medido:
+
+| corrida | por embeber | tokens | % de la cuota |
+|---|---|---|---|
+| primera (caché sembrado) | 156 | 25.428 | **0,50 %** |
+| segunda (mismo día) | **0** | 0 | 0 % |
+
+A 22 corridas al mes, la cuota da para unos **nueve meses**.
+
+**El tope, que es lo que de verdad protege.** Antes de gastar un token se cuentan
+los chunks ausentes del caché. Si superan el tope, la función se detiene:
+
+```
+9,280 chunks por embeber, por encima del tope de 600.
+(caché en S3: NO, 0 vectores). Una corrida diaria mueve ~160-300; esto se parece
+a un backfill completo, que costaría ~1.51 M tokens de la cuota de Jina.
+Si es intencionado, invoca con {"tope": 9281}.
+```
+
+Un caché perdido y un backfill legítimo se ven **idénticos** desde dentro: miles
+de chunks por calcular. La única diferencia es que uno lo pediste tú. Por eso el
+tope se salta a mano y no se relaja solo.
+
+### Un bug de orden de import, cazado por el guard de firma
+
+`embeddings.py` lee `EMBED_MODEL` como constante de **módulo**, en tiempo de
+import. Fijarlo dentro del handler llegaba tarde, y la función acababa usando
+`text-embedding-3-small` con la clave de Jina.
+
+No fue silencioso, y ése es el punto: la firma salía
+`api:text-embedding-3-small:256` en vez de `api:jina-embeddings-v3:256`, el caché
+no coincidía, y el preflight lo reportó como "0 vectores en caché". El guard de
+firma de la Fase B hizo exactamente su trabajo — detectar que dos embebedores
+distintos no comparten espacio vectorial.
+
+Los tres valores pasan ahora por la configuración de la Lambda, que es donde se
+ven sin leer código.
+
+### Los secretos no los gestiona CDK
+
+```
+/preciovivo/embed-api-key    clave de Jina         SecureString, tier Standard
+/preciovivo/github-token     token de GitHub       SecureString, tier Standard
+```
+
+Se crean **una vez a mano**. Un secreto en la definición de la infraestructura
+acaba en el repositorio, en el historial de CloudFormation y en los logs de
+despliegue. CDK solo concede permiso de lectura sobre cada parámetro concreto.
+
+**Parameter Store y no Secrets Manager**: éste cobra 0,40 USD por secreto al mes
+—0,96 al año por los dos— y aquél, en tier estándar, es gratis. La rotación
+automática de Secrets Manager no compensa para una clave que se lee una vez al día.
+
+Comprobado además que `ssm:GetParameter` **descifra sin necesitar un permiso KMS
+aparte**, así que no hace falta ningún `Resource: "*"` en las políticas. Era la
+única parte del proyecto donde un comodín parecía inevitable, y no lo era.
+
+Si falta un parámetro, el error dice cuál y cómo crearlo:
+
+```
+falta el parámetro /preciovivo/github-token (token de GitHub para commitear el
+snapshot). Se crea una vez con:
+    aws ssm put-parameter --name "/preciovivo/github-token" --type SecureString
+      --value "<token>" --overwrite
+```
+
+### La publicación: un commit, no tres
+
+Sustituye las últimas cinco líneas de `actualizar-diario.ps1`. Vercel se
+redespliega solo con el push, así que el sitio no cambia.
+
+Se usa la **API de datos de Git** —blobs, árbol, commit, ref— y no la API de
+contenidos, que sube un archivo por llamada y produciría tres commits para un
+solo cambio. Los tres archivos describen el mismo día y deben entrar o quedarse
+fuera juntos.
+
+Detalles que importan:
+
+- **No commitea si nada cambió.** Se compara el SHA-1 que Git le daría a cada
+  contenido contra el que el árbol ya declara. Un sábado sin reporte nuevo no
+  produce un commit vacío ni un redespliegue.
+- **`force: False` al mover la rama.** Si alguien empujó a `main` mientras
+  trabajábamos, la llamada falla con 422 en vez de borrar ese commit. Es el mismo
+  bloqueo optimista que el `IfMatch` de S3, aplicado a Git.
+- **Sin dependencias.** Solo `urllib` de la estándar: la API de GitHub es HTTP
+  con JSON, y añadir `requests` serían 3 MB para no escribir seis líneas.
+
+### Permisos IAM añadidos
+
+| función | permiso | motivo |
+|---|---|---|
+| SISAP | `s3:Get/PutObject` sobre `estado/preciovivo.db` y `estado/sisap_check.json` | ingesta AVES y publica el contraste |
+| índice | `s3:GetObject` sobre `snapshot.json` | lee lo que acaba de publicar el export |
+| índice | `s3:Get/PutObject` sobre `rag/*` y `estado/embed_cache.*` | el artefacto y el caché |
+| índice | `ssm:GetParameter` sobre `/preciovivo/embed-api-key` | **solo ese parámetro**, sin `GetParametersByPath`, que dejaría leer todo el árbol |
+| publicador | `s3:GetObject` sobre `snapshot.json` y `rag/*` | lo que sube al repositorio |
+| publicador | `ssm:GetParameter` sobre `/preciovivo/github-token` | ídem |
+| cosecha, SISAP, export, índice | `s3:ListBucket` sobre el bucket, **con condición de prefijo `estado/*`** | ver abajo |
+
+**El ListBucket merece explicación, porque parece contradecir todo lo anterior.**
+Sin él, S3 responde `AccessDenied` —no `NoSuchKey`— cuando el objeto **no
+existe**: es deliberado, porque decir "no existe" ya revelaría información sobre
+el contenido del bucket. La consecuencia es que el código que distingue "todavía
+no está" de "no puedo leerlo" deja de funcionar.
+
+Pasó de verdad: `bajar_sisap()` capturaba `NoSuchKey`, recibió `AccessDenied` y
+tumbó la ejecución entera el primer día en que el contraste no existía. El bug
+estaba latente desde la Fase 3 y solo apareció cuando un objeto consultado
+realmente faltó. Se concede acotado por prefijo: permite listar `estado/*` y
+nada más.
+
+### Costo
+
+| concepto | mensual |
+|---|---|
+| Las tres Lambdas nuevas | 0,00 USD — dentro de los 400.000 GB-s gratuitos |
+| SSM Parameter Store (2 parámetros, tier estándar) | **0,00 USD** |
+| Step Functions (3 transiciones más por corrida) | 0,00 USD — ver abajo |
+| Jina (fuera de AWS) | 0,00 USD — 25.428 tokens/corrida sobre un saldo de 5,09 M |
+| **Total añadido** | **0,00 USD** |
+
+**El calendario cambió a lunes-viernes por costo, no por calendario.** El `Map`
+genera ~154 transiciones por corrida; a 30 corridas son 4.620 contra las 4.000
+gratuitas de Step Functions, o sea ~0,015 USD/mes. A 22 corridas son 3.388,
+dentro de la capa. Se pierde que el sábado recoja un 335 publicado tarde el
+viernes; `--latest 5` lo recupera el lunes. El día que el gasto deje de importar,
+volver a diario son cinco caracteres.
+
+### Tres preguntas de entrevista
+
+**1. Tu paso de indexado podía vaciar una cuota de 5 millones de tokens en tres
+días sin dar un solo error. ¿Cómo lo evitaste?**
+
+Primero entendiendo qué hacía de verdad la función que estaba llamando: el flag
+`solo_reciente` no reduce lo que se embebe, solo lo que se escribe. Lo que abarata
+la corrida diaria es el caché, y en una Lambda `/tmp` no sobrevive al contenedor.
+Así que el caché viaja a S3 y vuelve. Pero eso solo mueve el problema: si un día
+el caché no está, vuelve a pasar. Por eso añadí un preflight que cuenta los chunks
+ausentes ANTES de gastar un token y se detiene si superan un tope. La parte que me
+parece importante es que un caché perdido y un backfill legítimo se ven idénticos
+desde dentro, así que el tope no se relaja solo: se salta a mano, pasando el
+número por el evento.
+
+**2. Concediste `s3:ListBucket` después de haber insistido en permisos mínimos.
+¿Por qué?**
+
+Porque sin él, S3 devuelve AccessDenied en lugar de NoSuchKey cuando el objeto no
+existe, para no filtrar qué hay en el bucket. Mi código distinguía "todavía no
+está" de "no puedo leerlo" capturando NoSuchKey, y esa rama nunca se ejecutaba: la
+ejecución entera se caía el primer día que un objeto opcional faltó. Lo concedí
+acotado por condición de prefijo, así que permite listar el estado del pipeline y
+nada más. La lección que me llevo es que el permiso mínimo no es solo una cuestión
+de seguridad: cambia los errores que recibes, y hay código que depende de esa
+diferencia.
+
+**3. ¿Por qué commiteas a GitHub en vez de servir el snapshot desde S3?**
+
+Porque el sitio ya lee ese archivo del repositorio en tiempo de build y Vercel ya
+redespliega con cada push. Cambiarlo por una descarga desde S3 significaría
+rehacer cómo se construye el sitio a cambio de nada. Lo que sí cambié es quién
+hace el commit: antes una máquina encendida en Lima, ahora una función con un
+token de alcance mínimo. Y lo hice con la API de datos de Git en vez de la de
+contenidos, porque ésta sube un archivo por llamada y habría producido tres
+commits para un solo cambio; los tres archivos describen el mismo día. Muevo la
+rama sin `force`, así que si alguien empujó mientras tanto la llamada falla en vez
+de borrar su trabajo.

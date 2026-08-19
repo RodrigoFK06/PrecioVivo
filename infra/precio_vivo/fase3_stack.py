@@ -78,6 +78,8 @@ PREFIJO_RAG = "rag/"
 # acaba en el repositorio, en el historial de CloudFormation y en los logs de
 # despliegue.
 PARAM_CLAVE_EMBED = "/preciovivo/embed-api-key"
+PARAM_TOKEN_GITHUB = "/preciovivo/github-token"
+REPO_GITHUB = "RodrigoFK06/PrecioVivo"
 
 # Lambda asigna una vCPU completa alrededor de los 1.769 MB. Por debajo, el GBM
 # —que es CPU pura y de un solo hilo— va proporcionalmente más lento. Por encima
@@ -155,6 +157,14 @@ class Fase3Stack(Stack):
              "EMBED_BASE_URL": "https://api.jina.ai/v1",
              "EMBED_MODEL": "jina-embeddings-v3",
              "EMBED_DIMS": "256"})
+
+        fn_publicar = nueva_fn(
+            "Publicar", "publicar", "publicar.handler", 512, 300,
+            {"BUCKET_SNAPSHOT": bucket.bucket_name,
+             "CLAVE_SNAPSHOT": CLAVE_SNAPSHOT,
+             "PREFIJO_RAG": PREFIJO_RAG,
+             "PARAM_TOKEN_GITHUB": PARAM_TOKEN_GITHUB,
+             "REPO_GITHUB": REPO_GITHUB})
 
         fn_export = nueva_fn("Export", "export", "exportar.handler",
                              1024, 300,
@@ -253,6 +263,18 @@ class Fase3Stack(Stack):
             actions=["ssm:GetParameter"],
             resources=[
                 f"arn:aws:ssm:{self.region}:{self.account}:parameter{PARAM_CLAVE_EMBED}"],
+        ))
+
+        # El publicador lee lo que hay que subir al repositorio y su token.
+        fn_publicar.add_to_role_policy(iam.PolicyStatement(
+            actions=["s3:GetObject"],
+            resources=[bucket.arn_for_objects(CLAVE_SNAPSHOT),
+                       bucket.arn_for_objects(PREFIJO_RAG + "*")],
+        ))
+        fn_publicar.add_to_role_policy(iam.PolicyStatement(
+            actions=["ssm:GetParameter"],
+            resources=[
+                f"arn:aws:ssm:{self.region}:{self.account}:parameter{PARAM_TOKEN_GITHUB}"],
         ))
 
         # --- La máquina de estados ------------------------------------------
@@ -360,6 +382,15 @@ class Fase3Stack(Stack):
         paso_indice.add_retry(errors=["States.ALL"], max_attempts=2,
                               interval=Duration.seconds(10), backoff_rate=2.0)
 
+        paso_publicar = tareas.LambdaInvoke(
+            self, "PublicarEnGitHub",
+            lambda_function=fn_publicar,
+            payload_response_only=True,
+            result_path="$.publicacion",
+        )
+        paso_publicar.add_retry(errors=["States.ALL"], max_attempts=3,
+                                interval=Duration.seconds(10), backoff_rate=2.0)
+
         decision = sfn.Choice(self, "PasoLaCompuerta")
         decision.when(
             sfn.Condition.boolean_equals("$.ingesta.fallo_de_compuerta", True),
@@ -381,12 +412,15 @@ class Fase3Stack(Stack):
         # catálogo-en-contexto y sigue respondiendo, solo que sin recuperación
         # vectorial de los días nuevos. Ese es el mismo criterio que ya tenía el
         # script de Windows, donde el indexado iba dentro de un try/catch.
-        paso_indice.add_catch(publicado, errors=["States.ALL"],
+        # El indexado puede fallar y aun así hay que publicar el snapshot: el
+        # sitio degrada a catálogo-en-contexto pero con los precios del día.
+        paso_indice.add_catch(paso_publicar, errors=["States.ALL"],
                               result_path="$.indiceError")
 
         decision.otherwise(
             paso_sisap.next(paso_listar).next(mapa).next(paso_reducir)
-            .next(paso_export).next(paso_indice).next(publicado)
+            .next(paso_export).next(paso_indice).next(paso_publicar)
+            .next(publicado)
         )
 
         maquina = sfn.StateMachine(
@@ -454,6 +488,7 @@ class Fase3Stack(Stack):
         CfnOutput(self, "FnIngesta", value=fn_ingesta.function_name)
         CfnOutput(self, "FnSisap", value=fn_sisap.function_name)
         CfnOutput(self, "FnIndice", value=fn_indice.function_name)
+        CfnOutput(self, "FnPublicar", value=fn_publicar.function_name)
         CfnOutput(self, "FnListar", value=fn_listar.function_name)
         CfnOutput(self, "FnProducto", value=fn_producto.function_name)
         CfnOutput(self, "FnReducir", value=fn_reducir.function_name)
