@@ -508,7 +508,24 @@ export async function POST(request: Request) {
     );
   }
 
-  if (!AI_API_KEY) return NextResponse.json(fallback(q, snap) satisfies Respuesta);
+  if (!AI_API_KEY) {
+    // POR QUÉ ESTO SE REGISTRA Y NO SE CALLA
+    // La escalera de abajo degrada en silencio a propósito: el usuario recibe
+    // una respuesta con datos reales pase lo que pase. El efecto secundario es
+    // que desde fuera "no hay clave configurada" y "el proveedor falló" se ven
+    // EXACTAMENTE igual: un 200 con fuente "fallback".
+    //
+    // Costó una tarde averiguar cuál de las dos era. Un fallo que degrada bien
+    // pero no deja rastro no es observable, y algo que no se puede observar no
+    // se puede arreglar.
+    console.error(
+      "[consulta] sin AI_API_KEY ni DEEPSEEK_API_KEY en el entorno: " +
+        "se responde por palabras clave, sin modelo ni recuperación. " +
+        "Configúralas en Vercel > Settings > Environment Variables (Production) " +
+        "y vuelve a desplegar.",
+    );
+    return NextResponse.json(fallback(q, snap) satisfies Respuesta);
+  }
 
   // Escalera de degradación, de más a menos capaz. Cada peldaño responde con
   // datos reales; lo que cambia es cuánta evidencia ve el modelo.
@@ -518,12 +535,27 @@ export async function POST(request: Request) {
   try {
     const conRag = await conRAG(q, snap);
     if (conRag) return NextResponse.json(conRag satisfies Respuesta);
-  } catch {
-    // Índice ausente, sin clave de embeddings o el proveedor falló: se sigue.
+    console.error(
+      "[consulta] el RAG no devolvió contexto (índice ausente, firma del " +
+        "embebedor distinta a la del artefacto, o EMBED_API_KEY sin configurar). " +
+        "Se baja al peldaño de catálogo.",
+    );
+  } catch (e) {
+    console.error("[consulta] el peldaño RAG falló:", nombreDeError(e));
   }
   try {
     return NextResponse.json((await conLLM(q, snap)) satisfies Respuesta);
-  } catch {
+  } catch (e) {
+    console.error("[consulta] el peldaño catálogo falló:", nombreDeError(e));
     return NextResponse.json(fallback(q, snap) satisfies Respuesta);
   }
+}
+
+/** Nombre y mensaje del error, nunca el objeto entero.
+ *
+ *  El cliente de OpenAI adjunta la petición —cabeceras incluidas— al error, así
+ *  que volcarlo tal cual escribiría la clave de API en los logs de Vercel. */
+function nombreDeError(e: unknown): string {
+  if (e instanceof Error) return `${e.name}: ${e.message.slice(0, 200)}`;
+  return String(e).slice(0, 200);
 }
