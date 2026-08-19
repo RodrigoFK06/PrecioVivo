@@ -72,6 +72,12 @@ CLAVE_DB = PREFIJO_ESTADO + "preciovivo.db"
 CLAVE_CACHE = PREFIJO_ESTADO + "forecast_cache.json"
 CLAVE_SISAP = PREFIJO_ESTADO + "sisap_check.json"
 CLAVE_SNAPSHOT = "snapshot.json"
+PREFIJO_RAG = "rag/"
+# El nombre del parámetro, NO su valor. El secreto se crea una vez a mano y se
+# lee en tiempo de ejecución: un secreto en la definición de la infraestructura
+# acaba en el repositorio, en el historial de CloudFormation y en los logs de
+# despliegue.
+PARAM_CLAVE_EMBED = "/preciovivo/embed-api-key"
 
 # Lambda asigna una vCPU completa alrededor de los 1.769 MB. Por debajo, el GBM
 # —que es CPU pura y de un solo hilo— va proporcionalmente más lento. Por encima
@@ -134,6 +140,21 @@ class Fase3Stack(Stack):
 
         fn_reducir = nueva_fn("ForecastReducir", "forecast",
                               "forecast_lambda.reducir", 1024, 300)
+
+        fn_indice = nueva_fn(
+            "Indice", "indice", "indexar.handler", 2048, 600,
+            {"BUCKET_SNAPSHOT": bucket.bucket_name,
+             "CLAVE_SNAPSHOT": CLAVE_SNAPSHOT,
+             "PREFIJO_RAG": PREFIJO_RAG,
+             "PREFIJO_ESTADO": PREFIJO_ESTADO,
+             "PARAM_CLAVE_EMBED": PARAM_CLAVE_EMBED,
+             # Estos tres definen la FIRMA del embebedor, y la firma es lo que
+             # ata el índice publicado a la consulta que hace el sitio. Van aquí
+             # y no en el código porque `embeddings.py` los lee en tiempo de
+             # import: fijarlos dentro del handler llega tarde.
+             "EMBED_BASE_URL": "https://api.jina.ai/v1",
+             "EMBED_MODEL": "jina-embeddings-v3",
+             "EMBED_DIMS": "256"})
 
         fn_export = nueva_fn("Export", "export", "exportar.handler",
                              1024, 300,
@@ -210,6 +231,28 @@ class Fase3Stack(Stack):
         fn_export.add_to_role_policy(iam.PolicyStatement(
             actions=["s3:PutObject"],
             resources=[bucket.arn_for_objects(CLAVE_SNAPSHOT)],
+        ))
+
+        # El indexado lee el snapshot publicado, escribe el artefacto RAG y —lo
+        # que de verdad importa— lee y reescribe el CACHÉ de embeddings. Sin ese
+        # caché, cada corrida diaria re-embebería el corpus entero: ~1,5 M tokens
+        # de una cuota de 5 M. Ver el docstring de lambda_indice/.
+        fn_indice.add_to_role_policy(iam.PolicyStatement(
+            actions=["s3:GetObject"],
+            resources=[bucket.arn_for_objects(CLAVE_SNAPSHOT)],
+        ))
+        fn_indice.add_to_role_policy(iam.PolicyStatement(
+            actions=["s3:GetObject", "s3:PutObject"],
+            resources=[bucket.arn_for_objects(PREFIJO_RAG + "*"),
+                       bucket.arn_for_objects(PREFIJO_ESTADO + "embed_cache.*")],
+        ))
+        fn_indice.add_to_role_policy(listar_estado)
+        # Solo GetParameter, y solo ESE parámetro. Sin `ssm:GetParametersByPath`,
+        # que dejaría leer todo el árbol /preciovivo/.
+        fn_indice.add_to_role_policy(iam.PolicyStatement(
+            actions=["ssm:GetParameter"],
+            resources=[
+                f"arn:aws:ssm:{self.region}:{self.account}:parameter{PARAM_CLAVE_EMBED}"],
         ))
 
         # --- La máquina de estados ------------------------------------------
@@ -308,6 +351,15 @@ class Fase3Stack(Stack):
         paso_export.add_retry(errors=["States.ALL"], max_attempts=3,
                               interval=Duration.seconds(5), backoff_rate=2.0)
 
+        paso_indice = tareas.LambdaInvoke(
+            self, "IndexarRag",
+            lambda_function=fn_indice,
+            payload_response_only=True,
+            result_path="$.indice",
+        )
+        paso_indice.add_retry(errors=["States.ALL"], max_attempts=2,
+                              interval=Duration.seconds(10), backoff_rate=2.0)
+
         decision = sfn.Choice(self, "PasoLaCompuerta")
         decision.when(
             sfn.Condition.boolean_equals("$.ingesta.fallo_de_compuerta", True),
@@ -322,9 +374,19 @@ class Fase3Stack(Stack):
         paso_sisap.add_catch(paso_listar, errors=["States.ALL"],
                              result_path="$.sisapError")
 
+        publicado = sfn.Succeed(self, "Publicado")
+
+        # El índice RAG tampoco puede tumbar la publicación. Si falla —sin clave,
+        # cuota agotada, tope de embeddings superado— el sitio degrada a
+        # catálogo-en-contexto y sigue respondiendo, solo que sin recuperación
+        # vectorial de los días nuevos. Ese es el mismo criterio que ya tenía el
+        # script de Windows, donde el indexado iba dentro de un try/catch.
+        paso_indice.add_catch(publicado, errors=["States.ALL"],
+                              result_path="$.indiceError")
+
         decision.otherwise(
             paso_sisap.next(paso_listar).next(mapa).next(paso_reducir)
-            .next(paso_export).next(sfn.Succeed(self, "Publicado"))
+            .next(paso_export).next(paso_indice).next(publicado)
         )
 
         maquina = sfn.StateMachine(
@@ -391,6 +453,7 @@ class Fase3Stack(Stack):
         CfnOutput(self, "MaquinaDeEstados", value=maquina.state_machine_arn)
         CfnOutput(self, "FnIngesta", value=fn_ingesta.function_name)
         CfnOutput(self, "FnSisap", value=fn_sisap.function_name)
+        CfnOutput(self, "FnIndice", value=fn_indice.function_name)
         CfnOutput(self, "FnListar", value=fn_listar.function_name)
         CfnOutput(self, "FnProducto", value=fn_producto.function_name)
         CfnOutput(self, "FnReducir", value=fn_reducir.function_name)

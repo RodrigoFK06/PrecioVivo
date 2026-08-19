@@ -61,6 +61,8 @@ REQUISITOS = {
     "ingesta": ["requests==2.34.2", "pdfplumber==0.11.10"],
     "forecast": ["numpy==2.5.0", "scikit-learn==1.9.0", "holidays==0.99"],
     "export": ["numpy==2.5.0", "holidays==0.99"],
+    # `openai` porque ApiEmbedder habla el dialecto OpenAI, y Jina lo implementa.
+    "indice": ["numpy==2.5.0", "openai==2.43.0"],
     "sonda": ["requests==2.34.2"],
 }
 
@@ -147,6 +149,7 @@ _ensamblar("ingesta", [AQUI / "lambda_ingesta" / "ingesta.py",
                        AQUI / "lambda_ingesta" / "sisap_lambda.py", _COMUN])
 _ensamblar("forecast", [AQUI / "lambda_forecast" / "forecast_lambda.py", _COMUN])
 _ensamblar("export", [AQUI / "lambda_export" / "exportar.py", _COMUN])
+_ensamblar("indice", [AQUI / "lambda_indice" / "indexar.py"])
 # La sonda del WAF lleva el harvester REAL, no una reimplementación: una sonda
 # con su propia versión de la cadena de peticiones no responde la pregunta.
 _ensamblar("sonda", [AQUI / "lambda_sonda" / "sonda.py", PAQUETE / "harvester.py"],
@@ -162,7 +165,7 @@ fase1 = Fase1Stack(
 Fase3Stack(
     app, "PrecioVivoFase3", env=entorno,
     bucket=fase1.bucket,
-    activos={n: _activo(n) for n in ("ingesta", "forecast", "export")},
+    activos={n: _activo(n) for n in ("ingesta", "forecast", "export", "indice")},
     description="Precio Vivo Fase 3: ingesta diaria con EventBridge Scheduler y Step Functions",
 )
 SondaWafStack(
