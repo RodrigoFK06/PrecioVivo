@@ -113,12 +113,34 @@ def _boletin_pdf_path(arg: str):
     if arg.lower().startswith("http"):
         path, _sha, _n = B.fetch_boletin(arg)
         return path, True
-    # sin valor: usa el último PDF cacheado; si no hay, descarga el de muestra.
+    # Sin valor: se BUSCA el boletín del día en la colección 338.
+    #
+    # Antes esto caía al último PDF cacheado o, si no había ninguno, a una URL
+    # de muestra fija — un boletín de marzo de 2026 congelado en el código. Con
+    # eso, `--boletin` sin argumento nunca traía datos nuevos: reingestaba lo
+    # mismo una y otra vez sin que nada lo delatara, porque el parseo iba bien y
+    # el upsert era idempotente.
+    #
+    # El navegador de la colección 338 es el mismo que el de la 335 (ver
+    # `harvester.Coleccion`): la estructura de gob.pe es idéntica y solo cambian
+    # la portada y el prefijo del slug mensual.
+    try:
+        ultimos = H.latest_dailies(1, col=H.BOLETIN_338)
+    except Exception as e:  # noqa: BLE001 - sin red se sigue con lo cacheado
+        print(f"boletin: no se pudo navegar la colección 338 ({type(e).__name__}); "
+              f"se intentará con el PDF cacheado")
+        ultimos = []
+    if ultimos:
+        path, _sha, _n = B.fetch_boletin(ultimos[-1].url)
+        return path, True
+
+    # Solo si la red falla: lo último que se descargó. Se dice que es viejo en
+    # vez de presentarlo como si fuera de hoy.
     cached = sorted(glob.glob(os.path.join(B.RAW_DIR, f"{B.FUENTE}_*.pdf")))
     if cached:
+        print(f"boletin: usando cacheado {os.path.basename(cached[-1])} (sin red)")
         return cached[-1], False
-    path, _sha, _n = B.fetch_boletin(B.SAMPLE_URL)
-    return path, True
+    return None, False
 
 
 def _run_boletin(store: Store, arg: str) -> None:

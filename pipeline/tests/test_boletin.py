@@ -19,9 +19,27 @@ RAW_DIR = os.environ.get("PRECIOVIVO_RAW", os.path.join(
 REQUIRED_KEYS = {"mercado", "cnpa", "producto", "precio_kg", "fecha", "var_pct"}
 
 
+# La edición de la que se leyeron los valores exactos del spot-check. Tiene que
+# ser ESA y no "la más nueva": los precios cambian cada día, así que un test de
+# valores atado a "el último PDF que haya en caché" pasa mientras solo exista esa
+# edición y falla en cuanto se descargue otra.
+#
+# Pasó al cablear la navegación de la colección 338: hasta entonces el único PDF
+# cacheado era el de marzo y la coincidencia parecía intencionada.
+EDICION_DEL_SPOT_CHECK = "boletin-gmml-mm2_2026-03-12.pdf"
+
+
 def _cached_pdf() -> str | None:
+    """El PDF más NUEVO en caché. A propósito: los tests estructurales deben
+    correr contra la edición más reciente, que es como se detecta que la fuente
+    cambió de formato."""
     hits = sorted(glob.glob(os.path.join(RAW_DIR, "boletin-gmml-mm2_*.pdf")))
     return hits[-1] if hits else None
+
+
+def _pdf_del_spot_check() -> str | None:
+    ruta = os.path.join(RAW_DIR, EDICION_DEL_SPOT_CHECK)
+    return ruta if os.path.exists(ruta) else None
 
 
 @pytest.fixture(scope="module")
@@ -35,6 +53,15 @@ def boletin_pdf() -> str:
     except Exception as e:  # network down / source unreachable
         pytest.skip(f"sin PDF boletín cacheado y sin red: {e}")
     return path
+
+
+@pytest.fixture(scope="module")
+def rows_de_la_edicion_fijada() -> list[dict]:
+    """Filas de la edición concreta de la que se leyeron los valores exactos."""
+    ruta = _pdf_del_spot_check()
+    if not ruta:
+        pytest.skip(f"falta {EDICION_DEL_SPOT_CHECK}, la edición del spot-check")
+    return boletin.parse_boletin(ruta)
 
 
 @pytest.fixture(scope="module")
@@ -92,7 +119,8 @@ def test_same_product_can_span_two_markets(rows):
         assert maracuya == {"GMML", "MMF2"}
 
 
-def test_known_values_spot_check(rows):
+def test_known_values_spot_check(rows_de_la_edicion_fijada):
+    rows = rows_de_la_edicion_fijada
     # Exact values read off the 12-03-2026 grid (precio_kg = current-week avg).
     expected = {
         ("GMML", "01122", "MAIZ MARLO/CORONTA DE MAIZ"): (18.25, 3.0),

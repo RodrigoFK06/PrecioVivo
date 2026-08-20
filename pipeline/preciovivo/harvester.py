@@ -20,15 +20,47 @@ import requests
 COLLECTION_URL = ("https://www.gob.pe/institucion/midagri/colecciones/"
                   "335-reporte-de-ingreso-y-precios-en-el-gran-mercado-mayorista-de-lima")
 BASE = "https://www.gob.pe"
+
+# Colección 338: el boletín multi-mercado. Añade el Mercado Mayorista de Frutas
+# Nº2, que son ~79 productos que el reporte 335 no cubre — su portada lo dice:
+# "Hortalizas · Legumbres · Tubérculos y raíces". Las frutas viven aquí.
+COLECCION_BOLETIN = ("https://www.gob.pe/institucion/midagri/colecciones/"
+                     "338-boletin-de-abastecimiento-y-precios-en-el-mercado-"
+                     "mayorista-de-lima-gmml-y-mm-n2")
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 RAW_DIR = os.environ.get("PRECIOVIVO_RAW", "../data/raw")
 FUENTE = "reporte-335"
 
-_MONTH_RE = re.compile(
-    r"/institucion/midagri/informes-publicaciones/\d+-reporte-de-ingreso[a-z0-9-]*", re.I)
+# El patrón del PDF es EL MISMO en ambas colecciones: gob.pe pone la fecha al
+# final del nombre como DD-MM-AAAA. Lo que cambia es qué páginas de mes buscar.
 _PDF_RE = re.compile(
     r"https://cdn\.www\.gob\.pe/uploads/document/file/\d+/[^\"'\s]+?-(\d{2})-(\d{2})-(\d{4})\.pdf(?:\?v=\d+)?", re.I)
+_MONTH_RE = re.compile(
+    r"/institucion/midagri/informes-publicaciones/\d+-reporte-de-ingreso[a-z0-9-]*", re.I)
+_MONTH_RE_BOLETIN = re.compile(
+    r"/institucion/midagri/informes-publicaciones/\d+-boletin-de-abastecimiento[a-z0-9-]*", re.I)
+
+
+@dataclass(frozen=True)
+class Coleccion:
+    """Una colección de gob.pe: portada, cómo son sus páginas de mes, y su fuente.
+
+    Las dos colecciones que interesan tienen la MISMA estructura de navegación
+    —portada paginada con `?sheet=N`, páginas de mes, PDFs con la fecha en el
+    nombre— y solo se diferencian en la URL y en el prefijo del slug mensual.
+    Por eso el navegador se parametriza en vez de duplicarse: un cambio en cómo
+    gob.pe pagina sus colecciones se arregla una vez.
+    """
+    nombre: str
+    url: str
+    mes_re: "re.Pattern[str]"
+    fuente: str
+
+
+REPORTE_335 = Coleccion("reporte 335", COLLECTION_URL, _MONTH_RE, "reporte-335")
+BOLETIN_338 = Coleccion("boletín 338", COLECCION_BOLETIN, _MONTH_RE_BOLETIN,
+                        "boletin-gmml-mm2")
 
 _session = requests.Session()
 _session.headers["User-Agent"] = UA
@@ -53,16 +85,16 @@ def _get(url: str, tries: int = 3) -> str:
     return ""
 
 
-def month_pages(max_sheets: int = 4) -> list[str]:
+def month_pages(max_sheets: int = 4, col: Coleccion = REPORTE_335) -> list[str]:
     """Return month index page URLs (newest first), de-duplicated, across sheets."""
     seen, out = set(), []
     for sheet in range(1, max_sheets + 1):
-        url = COLLECTION_URL + ("" if sheet == 1 else f"?sheet={sheet}")
+        url = col.url + ("" if sheet == 1 else f"?sheet={sheet}")
         try:
             html = _get(url)
         except requests.RequestException:
             break
-        found = [BASE + m.group(0) for m in _MONTH_RE.finditer(html)]
+        found = [BASE + m.group(0) for m in col.mes_re.finditer(html)]
         new = [u for u in found if u not in seen]
         if not new:
             break
@@ -72,8 +104,8 @@ def month_pages(max_sheets: int = 4) -> list[str]:
     return out
 
 
-def latest_month_page() -> str | None:
-    pages = month_pages(max_sheets=1)
+def latest_month_page(col: Coleccion = REPORTE_335) -> str | None:
+    pages = month_pages(max_sheets=1, col=col)
     # the collection lists newest months first within the page
     return pages[0] if pages else None
 
@@ -96,8 +128,8 @@ def dailies_in_month(month_url: str) -> list[Daily]:
     return out
 
 
-def latest_dailies(n: int = 5) -> list[Daily]:
-    mp = latest_month_page()
+def latest_dailies(n: int = 5, col: Coleccion = REPORTE_335) -> list[Daily]:
+    mp = latest_month_page(col)
     if not mp:
         return []
     ds = dailies_in_month(mp)
