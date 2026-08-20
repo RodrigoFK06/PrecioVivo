@@ -13,7 +13,11 @@ from aws_cdk import (
     Duration,
     RemovalPolicy,
     Stack,
+)
+from aws_cdk import (
     aws_lambda as lambda_,
+)
+from aws_cdk import (
     aws_logs as logs,
 )
 from constructs import Construct

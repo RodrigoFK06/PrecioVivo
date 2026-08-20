@@ -44,7 +44,16 @@ jobs:
           pip install --no-deps -e .
 
       - name: Lint
-        run: ruff check preciovivo tests evals
+        # `infra` y `scripts` entran aquí desde que existe la capa de AWS: son
+        # ~1.900 líneas de CDK y PowerShell que nadie revisaba. Al añadirlas
+        # salieron 28 avisos, entre ellos un `date.today()` en una Lambda —donde
+        # el reloj es UTC— y un `noqa` que ya no protegía nada.
+        #
+        # Se corre desde la raíz porque `infra` y `scripts` son hermanos de
+        # `pipeline`, no hijos.
+        run: |
+          ruff check preciovivo tests evals
+          cd .. && ruff check infra scripts             --exclude infra/.venv,infra/cdk.out,infra/build
 
       - name: Tests
         env:

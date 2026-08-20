@@ -49,9 +49,17 @@ from aws_cdk import (
     CfnOutput,
     Duration,
     Stack,
+)
+from aws_cdk import (
     aws_cloudwatch as cw,
+)
+from aws_cdk import (
     aws_cloudwatch_actions as acciones,
+)
+from aws_cdk import (
     aws_sns as sns,
+)
+from aws_cdk import (
     aws_sns_subscriptions as subs,
 )
 from constructs import Construct

@@ -36,12 +36,11 @@ import os
 import time
 
 import boto3
-
 import estado_s3
 
 os.environ.setdefault("PRECIOVIVO_DB", estado_s3.RUTA_DB)
 
-from preciovivo import export as E  # noqa: E402
+from preciovivo import export as E
 
 BUCKET_SNAPSHOT = os.environ["BUCKET_SNAPSHOT"]
 CLAVE_SNAPSHOT = os.environ.get("CLAVE_SNAPSHOT", "snapshot.json")

@@ -12,8 +12,6 @@ import sys
 from datetime import date
 from pathlib import Path
 
-import pytest
-
 RAIZ = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(RAIZ / "scripts"))
 import frescura  # noqa: E402

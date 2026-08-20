@@ -88,7 +88,7 @@ def handler(_event, _context):
         ds = H.latest_dailies(1)
         if not ds:
             raise RuntimeError("no hay PDF que descargar (falló el paso anterior)")
-        ruta, sha, n = H.download(ds[0])
+        _ruta, sha, n = H.download(ds[0])
         return {"fecha": ds[0].fecha.isoformat(), "bytes": n, "sha256": sha[:16]}
 
     resultados.append(_paso("descargar-pdf-del-cdn", paso_descarga))

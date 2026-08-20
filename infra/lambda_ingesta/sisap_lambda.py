@@ -45,7 +45,6 @@ tiene sus propias comprobaciones estructurales.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import time
@@ -55,9 +54,9 @@ import estado_s3
 os.environ.setdefault("PRECIOVIVO_RAW", "/tmp/raw")
 os.environ.setdefault("PRECIOVIVO_DB", estado_s3.RUTA_DB)
 
-from preciovivo import sisap as S  # noqa: E402
-from preciovivo.ingest import _sisap_aves_rows  # noqa: E402
-from preciovivo.store import Store  # noqa: E402
+from preciovivo import sisap as S
+from preciovivo.ingest import _sisap_aves_rows
+from preciovivo.store import Store
 
 
 def handler(_event, _context):

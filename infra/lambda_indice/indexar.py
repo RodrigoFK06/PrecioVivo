@@ -49,9 +49,9 @@ DESTINO_RAG = "/tmp/rag"
 os.environ.setdefault("PRECIOVIVO_EMBED_CACHE", "/tmp/embed_cache.npz")
 os.environ.setdefault("PRECIOVIVO_RAG_WEB", DESTINO_RAG)
 
-from preciovivo import indexer as IX  # noqa: E402
-from preciovivo.corpus import build_corpus  # noqa: E402
-from preciovivo.embeddings import get_embedder  # noqa: E402
+from preciovivo import indexer as IX
+from preciovivo.corpus import build_corpus
+from preciovivo.embeddings import get_embedder
 
 BUCKET_SNAPSHOT = os.environ["BUCKET_SNAPSHOT"]
 CLAVE_SNAPSHOT = os.environ.get("CLAVE_SNAPSHOT", "snapshot.json")

@@ -43,16 +43,15 @@ from __future__ import annotations
 import json
 import os
 import time
-from datetime import date
+from datetime import datetime, timezone
 
 import boto3
-
 import estado_s3
 
 os.environ.setdefault("PRECIOVIVO_DB", estado_s3.RUTA_DB)
 
-from preciovivo import forecast as F  # noqa: E402
-from preciovivo.store import Store  # noqa: E402
+from preciovivo import forecast as F
+from preciovivo.store import Store
 
 _s3 = boto3.client("s3")
 
@@ -142,7 +141,12 @@ def reducir(event, _context):
     # AWS que produzca menos que la local, sin decirlo, es justo lo que no puede
     # pasar. La escritura vuelve a ser condicional por el mismo motivo de siempre.
     store = Store()
-    n_pron = store.upsert_pronosticos(date.today(), list(por_slug.items()))
+    n_pron = store.upsert_pronosticos(
+        # UTC explícito y no `date.today()`: en Lambda el reloj es UTC, así que
+        # `today()` ya devolvía la fecha UTC — pero sin decirlo. La corrida es a
+        # las 08:00 de Lima (13:00 UTC) y coinciden; escribirlo evita que alguien
+        # lea "hoy" y piense "hoy en Lima".
+        datetime.now(timezone.utc).date(), list(por_slug.items()))
     store.close()
     estado_s3.subir_db(etag)
 

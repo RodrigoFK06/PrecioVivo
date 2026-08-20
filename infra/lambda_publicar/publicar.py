@@ -124,7 +124,7 @@ def _sha_git(datos: bytes) -> str:
     que el árbol del repositorio ya declara. Es lo que evita el commit vacío.
     """
     cabecera = f"blob {len(datos)}\0".encode()
-    return hashlib.sha1(cabecera + datos).hexdigest()  # noqa: S324 - formato de Git
+    return hashlib.sha1(cabecera + datos).hexdigest()
 
 
 def handler(_event, _context):

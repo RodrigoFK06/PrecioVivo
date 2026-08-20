@@ -30,9 +30,8 @@ import shutil
 import aws_cdk as cdk
 from aws_cdk import BundlingOptions
 from aws_cdk import aws_lambda as lambda_
-
-from precio_vivo.fase1_stack import Fase1Stack
 from precio_vivo.alarmas_stack import AlarmasStack
+from precio_vivo.fase1_stack import Fase1Stack
 from precio_vivo.fase3_stack import Fase3Stack
 from precio_vivo.sonda_waf_stack import SondaWafStack
 

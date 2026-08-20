@@ -47,9 +47,9 @@ import estado_s3
 os.environ.setdefault("PRECIOVIVO_RAW", "/tmp/raw")
 os.environ.setdefault("PRECIOVIVO_DB", estado_s3.RUTA_DB)
 
-from preciovivo import harvester as H  # noqa: E402
-from preciovivo.ingest import MIN_ROWS, _ingest_one  # noqa: E402
-from preciovivo.store import Store  # noqa: E402
+from preciovivo import harvester as H
+from preciovivo.ingest import MIN_ROWS, _ingest_one
+from preciovivo.store import Store
 
 DIAS = int(os.environ.get("DIAS_A_COSECHAR", "5"))
 

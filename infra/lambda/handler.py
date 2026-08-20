@@ -35,10 +35,9 @@ import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import boto3  # noqa: E402 - viene en el runtime de Lambda, no se empaqueta
-
-from preciovivo import service  # noqa: E402
-from preciovivo.service import ErrorDeConsulta  # noqa: E402
+import boto3
+from preciovivo import service
+from preciovivo.service import ErrorDeConsulta
 
 BUCKET = os.environ["SNAPSHOT_BUCKET"]
 CLAVE = os.environ.get("SNAPSHOT_KEY", "snapshot.json")

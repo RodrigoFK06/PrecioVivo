@@ -70,7 +70,7 @@ def _feriados(anios: list[int]) -> set[date]:
         import holidays
 
         return set(holidays.country_holidays("PE", years=anios))
-    except Exception:
+    except Exception:  # noqa: BLE001 - sin feriados se degrada a fines de semana
         return set()
 
 
