@@ -31,6 +31,34 @@ $root = Split-Path -Parent $PSScriptRoot
 $py = Join-Path $root "pipeline\.venv\Scripts\python.exe"
 $env:PYTHONIOENCODING = "utf-8"
 
+# ESPERAR A QUE HAYA RED ANTES DE EMPEZAR
+#
+# Lo que paso el primer dia de operacion autonoma: la maquina estaba dormida a
+# las 07:30, Windows no la desperto (WakeToRun estaba en False) y la ejecuto a
+# las 09:10 al despertar, con la pila de red aun sin levantar. El primer
+# `aws s3 cp` fallo en seco y la tarea salio con codigo 1.
+#
+# El diagnostico no es "la red falla a veces": es que despertar y tener red no
+# son el mismo instante. Esperar cuesta unos segundos y ahorra un dia sin
+# contraste.
+function Esperar-Red([int]$segundos = 120) {
+    $limite = (Get-Date).AddSeconds($segundos)
+    while ((Get-Date) -lt $limite) {
+        if (Test-Connection -ComputerName "s3.amazonaws.com" -Count 1 -Quiet -ErrorAction SilentlyContinue) {
+            return $true
+        }
+        Start-Sleep -Seconds 5
+    }
+    return $false
+}
+
+if (-not (Esperar-Red 120)) {
+    # Se sale con error a proposito: sin red no hay nada que hacer, y salir en
+    # verde dejaria el fallo invisible. El dead-man's-switch lo recogera si esto
+    # se repite tres dias habiles seguidos.
+    throw "Sin conectividad tras 120 s de espera; el relevo de SISAP no corre hoy."
+}
+
 $bucket = "preciovivofase1-snapshotbucketb2bf31d3-cg1401w9p7gp"
 $db = Join-Path $root "data\preciovivo.db"
 $check = Join-Path $root "data\sisap_check.json"
