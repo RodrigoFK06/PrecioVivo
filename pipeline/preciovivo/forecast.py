@@ -541,10 +541,32 @@ def _cargar_series(db_path: str) -> dict[str, list[dict]]:
     return out
 
 
+# Solo el GMML. La consulta agrupa por `nombre_canonico`, sin mercado, y eso
+# tiene dos consecuencias desde que la base trae mas de un mercado:
+#
+# 1. DESPERDICIO. `export._add_forecast` mapea los pronosticos contra
+#    `snapshot["productos"]`, que es GMML puro. Los de MMF2 y AVES se calculaban
+#    y se TIRABAN — 75 invocaciones de ~39 s por corrida para nada, ademas de
+#    inutiles: las frutas tienen un dia de historia contra un minimo de 90.
+#
+# 2. RIESGO LATENTE DE CORRECCION. Hoy ningun nombre se repite entre mercados
+#    (verificado: 0 colisiones), pero nada lo impide. El dia que ocurra, esta
+#    consulta fusionaria en UNA serie el precio de cierre del GMML con el
+#    promedio semanal del boletin: dos magnitudes distintas con el mismo nombre.
+#
+# El arreglo definitivo, cuando MMF2 acumule historia, NO es quitar el filtro:
+# es indexar la serie por (mercado, producto) en vez de por nombre. Eso cambia
+# la clave de `por_slug` y el mapeo del export, asi que se hara cuando haya algo
+# que pronosticar y no antes.
+_MERCADO_GMML = "GMML"
+
+
 def _query_series(db_path: str):
     sql = (
         "SELECT p.nombre_canonico, pd.fecha, pd.precio_hoy_kg, pd.masa_hoy "
         "FROM precios_diarios pd JOIN productos p ON p.id = pd.producto_id "
+        "JOIN mercados m ON m.id = pd.mercado_id "
+        f"WHERE m.codigo = '{_MERCADO_GMML}' "
         "ORDER BY p.nombre_canonico, pd.fecha"
     )
     dsn = os.environ.get("DATABASE_URL")

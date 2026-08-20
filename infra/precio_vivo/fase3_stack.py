@@ -7,8 +7,9 @@ EventBridge Scheduler  dispara a las 08:00 de Lima. Zona horaria nativa: no se
                        explicando la resta.
 Step Functions         encadena los pasos. Standard y no Express, porque Express
                        corta a los 5 minutos.
-6 Lambdas              cosecha, contraste SISAP, listado, un trabajador por
-                       producto, reducción y export. Están separadas porque sus
+7 Lambdas              cosecha, contraste SISAP, boletín multi-mercado,
+                       listado, un trabajador por producto, reducción, export y
+                       publicación. Están separadas porque sus
                        dependencias, su duración y su política de reintentos son
                        distintas.
 S3                     el bucket de la Fase 1, con prefijo `estado/`. No hace
@@ -148,6 +149,12 @@ class Fase3Stack(Stack):
         # baja un PDF y lo parsea. Otra función, no otro paquete.
         fn_sisap = nueva_fn("Sisap", "ingesta", "sisap_lambda.handler", 1024, 300)
 
+        # Mismo paquete que la cosecha: el boletín es otro PDF de gob.pe.
+        # 600 s porque navega la colección 338 (5 peticiones a ~3 s desde AWS)
+        # antes de descargar y parsear.
+        fn_boletin = nueva_fn("Boletin", "ingesta", "boletin_lambda.handler",
+                              1024, 600)
+
         fn_listar = nueva_fn("ForecastListar", "forecast",
                              "forecast_lambda.listar", 1024, 120)
 
@@ -237,6 +244,13 @@ class Fase3Stack(Stack):
                        bucket.arn_for_objects(CLAVE_SISAP)],
         ))
 
+        # El boletín ingesta las frutas: lee la BD y la reescribe.
+        fn_boletin.add_to_role_policy(iam.PolicyStatement(
+            actions=["s3:GetObject", "s3:PutObject"],
+            resources=[bucket.arn_for_objects(CLAVE_DB)],
+        ))
+        fn_boletin.add_to_role_policy(listar_estado)
+
         # La reducción escribe el caché del forecast y el historial de
         # pronósticos (que va dentro de la BD).
         fn_reducir.add_to_role_policy(iam.PolicyStatement(
@@ -319,6 +333,15 @@ class Fase3Stack(Stack):
         )
         paso_sisap.add_retry(errors=["States.ALL"], max_attempts=2,
                              interval=Duration.seconds(10), backoff_rate=2.0)
+
+        paso_boletin = tareas.LambdaInvoke(
+            self, "CosecharBoletin",
+            lambda_function=fn_boletin,
+            payload_response_only=True,
+            result_path="$.boletin",
+        )
+        paso_boletin.add_retry(errors=["States.ALL"], max_attempts=2,
+                               interval=Duration.seconds(10), backoff_rate=2.0)
 
         paso_listar = tareas.LambdaInvoke(
             self, "ListarProductos",
@@ -416,8 +439,14 @@ class Fase3Stack(Stack):
         # `$.sisapError`, donde queda visible en el historial de la ejecución
         # —a diferencia del Write-Warning del script de Windows, que se lo
         # llevaba una consola que nadie mira.
-        paso_sisap.add_catch(paso_listar, errors=["States.ALL"],
+        paso_sisap.add_catch(paso_boletin, errors=["States.ALL"],
                              result_path="$.sisapError")
+
+        # El boletín tampoco bloquea: si la colección 338 no publica hoy o cambia
+        # el layout de su grid, el sitio sale con los 73 productos del 335 en vez
+        # de 147 — menos catálogo, pero al día.
+        paso_boletin.add_catch(paso_listar, errors=["States.ALL"],
+                               result_path="$.boletinError")
 
         publicado = sfn.Succeed(self, "Publicado")
 
@@ -432,7 +461,7 @@ class Fase3Stack(Stack):
                               result_path="$.indiceError")
 
         decision.otherwise(
-            paso_sisap.next(paso_listar).next(mapa).next(paso_reducir)
+            paso_sisap.next(paso_boletin).next(paso_listar).next(mapa).next(paso_reducir)
             .next(paso_export).next(paso_indice).next(paso_publicar)
             .next(publicado)
         )
@@ -505,6 +534,7 @@ class Fase3Stack(Stack):
         CfnOutput(self, "MaquinaDeEstados", value=maquina.state_machine_arn)
         CfnOutput(self, "FnIngesta", value=fn_ingesta.function_name)
         CfnOutput(self, "FnSisap", value=fn_sisap.function_name)
+        CfnOutput(self, "FnBoletin", value=fn_boletin.function_name)
         CfnOutput(self, "FnIndice", value=fn_indice.function_name)
         CfnOutput(self, "FnPublicar", value=fn_publicar.function_name)
         CfnOutput(self, "FnListar", value=fn_listar.function_name)

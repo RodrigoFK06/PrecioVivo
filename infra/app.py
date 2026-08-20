@@ -157,7 +157,8 @@ _ensamblar("lambda", [AQUI / "lambda" / "handler.py"], MODULOS_FASE1)
 
 _COMUN = AQUI / "lambda_comun" / "estado_s3.py"
 _ensamblar("ingesta", [AQUI / "lambda_ingesta" / "ingesta.py",
-                       AQUI / "lambda_ingesta" / "sisap_lambda.py", _COMUN])
+                       AQUI / "lambda_ingesta" / "sisap_lambda.py",
+                       AQUI / "lambda_ingesta" / "boletin_lambda.py", _COMUN])
 _ensamblar("forecast", [AQUI / "lambda_forecast" / "forecast_lambda.py", _COMUN])
 _ensamblar("export", [AQUI / "lambda_export" / "exportar.py", _COMUN])
 _ensamblar("indice", [AQUI / "lambda_indice" / "indexar.py"])
