@@ -65,7 +65,7 @@ portátil.
 | `web/app` | 1.332 | 11 |
 | `web/lib` | 1.286 | 4 |
 
-**447 pruebas** de pipeline y **218** del sitio, 4 saltadas (dos exigen
+**459 pruebas** de pipeline y **218** del sitio, 4 saltadas (dos exigen
 Postgres, dos son integraciones lentas tras una variable de entorno).
 
 El CI las corre en cada push, en cuatro trabajos independientes para que un fallo
@@ -238,7 +238,10 @@ parámetro.
 
 ---
 
-## 5. El patrón que dominó la jornada
+## 5. El patrón que dominó la iteración
+
+> Analizado en detalle en [postmortem-fallos-silenciosos.md](postmortem-fallos-silenciosos.md):
+> nueve incidentes, tres en profundidad, causa raíz común y qué cambió.
 
 Cinco fallos, la misma forma: **degradan bien y no dejan rastro**.
 
