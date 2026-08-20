@@ -484,6 +484,10 @@ class Fase3Stack(Stack):
         # El día que el gasto deje de ser cero, volver a diario es cambiar cinco
         # caracteres.
 
+        # Lo consume `PrecioVivoAlarmas`, que vive en su propio stack para
+        # sobrevivir a que esta fase se rehaga.
+        self.arn_maquina = maquina.state_machine_arn
+
         CfnOutput(self, "MaquinaDeEstados", value=maquina.state_machine_arn)
         CfnOutput(self, "FnIngesta", value=fn_ingesta.function_name)
         CfnOutput(self, "FnSisap", value=fn_sisap.function_name)

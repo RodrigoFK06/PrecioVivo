@@ -65,8 +65,22 @@ portátil.
 | `web/app` | 1.332 | 11 |
 | `web/lib` | 1.286 | 4 |
 
-**435 pruebas** pasan, 4 saltadas (dos exigen Postgres, dos son integraciones
-lentas tras una variable de entorno).
+**435 pruebas** de pipeline y **218** del sitio, 4 saltadas (dos exigen
+Postgres, dos son integraciones lentas tras una variable de entorno).
+
+El CI las corre en cada push, en cuatro trabajos independientes para que un fallo
+del sitio no oculte uno del pipeline. Estuvo **apagado por facturación** durante
+días —fallaba en 3 s en cada push— y su primera corrida real, ya desbloqueado,
+encontró un fallo que las pruebas locales no podían ver: el guard del índice
+comparaba contra `pipeline/.env`, un archivo no versionado, así que en local
+pasaba por casualidad. Un guard que depende de un archivo que no está en el
+repositorio no es un guard.
+
+Debajo había algo peor: los defaults de `EMBED_MODEL` apuntaban a un modelo que
+no se usa en ningún sitio del proyecto. En `web/lib/rag.ts` eso era un peligro
+activo — perder esa variable en Vercel habría apagado la recuperación vectorial
+**sin error visible**, que es exactamente el fallo del primer commit de esta
+iteración.
 
 ### Infraestructura
 
@@ -182,33 +196,10 @@ código.
 
 ### Lo que no está a ese nivel
 
-**No hay una sola alarma.**
-
-```
-aws cloudwatch describe-alarms  →  0
-aws sns list-topics             →  0
-```
-
-La tubería falla de forma visible en la consola de Step Functions, pero nadie
-recibe nada. El diseño llegó hasta "fallo visible" y se quedó ahí: visible no es
-notificado. Es la brecha estructural más clara que le queda.
-
-**El CI está apagado por facturación.**
-
-```
-CI (ci.yml)            falla en 3 s en CADA push
-Ingesta diaria (cron)  falla en 3 s desde el 14 de agosto
-causa: "your account is locked due to a billing issue"
-```
-
-Las 435 pruebas y los guards del artefacto existen y **no se ejecutan**. Los 15
-commits de esta jornada se validaron solo corriendo `pytest` a mano. El
-*dead-man's-switch* que vigilaba que el snapshot envejeciera lleva sin correr
-desde el 14.
-
 **SISAP es un punto único de fallo con forma de portátil.** Si esa máquina está
-apagada, el sitio pierde el bloque `verificacion`. Y el vigilante que lo
-detectaría es justamente el workflow que está caído.
+apagada, el sitio pierde el bloque `verificacion`. El dead-man's-switch lo
+detectaría por el envejecimiento del dato, pero solo al día siguiente y solo si
+además deja de publicarse el snapshot: un contraste que falta no envejece nada.
 
 **El pronóstico sigue siendo la meta, no el producto.** El andamiaje de
 evaluación es mejor que el modelo que evalúa. Está bien reportado y no se infla,
@@ -265,16 +256,57 @@ infraestructura, es decidir si el kill-gate necesita correr a diario.
 
 ---
 
-## 7. Lo abierto, por orden de retorno
+## 7. Vigilancia: quién mira qué
 
-1. **Desbloquear la facturación de GitHub.** Sin CI, cada commit es un acto de
-   fe. Lo más barato con más retorno.
-2. **Una alarma.** `ExecutionsFailed` de la máquina de estados → SNS → correo.
-   ~15 líneas de CDK, capa gratuita. Convierte "falla visible" en "me entero".
-3. **Rotar las tres claves.**
-4. **Resolver el acceso a SISAP desde AWS** —otra región, un proxy peruano— o
+Dos instrumentos que no se solapan.
+
+| qué vigila | dónde | cómo |
+|---|---|---|
+| Que la tubería no falle | CloudWatch → SNS | `ExecutionsFailed`, `ExecutionsTimedOut` |
+| Que el dato no envejezca | CI, a diario | *Dead-man's-switch* sobre el snapshot publicado |
+
+**No hay alarma de "la tubería no corrió", y es deliberado.** Alarmar sobre
+ausencia exige una ventana, y aquí la ventana honesta es enorme: la máquina corre
+de lunes a viernes, así que entre el viernes y el lunes pasan 72 horas
+legítimas. Con ventana corta sonaría cada sábado, y una alarma que suena cuando
+no pasa nada deja de mirarse — el mismo error que ya se cometió con el guard del
+README y se corrigió.
+
+Esa vigilancia la hace el dead-man's-switch, y midiendo el **síntoma** (el dato
+está viejo) en vez de la **causa** (la máquina no arrancó), que además cubre el
+caso de que corra en verde y publique basura.
+
+`treat_missing_data = NOT_BREACHING`: la mayor parte del día no hay ejecuciones y
+por tanto no hay dato; sin eso la alarma viviría en `INSUFFICIENT_DATA`.
+
+Verificado que el cableado dispara de verdad, no solo que exista:
+
+```
+aws cloudwatch set-alarm-state --state-value ALARM ...
+→ Action  Successfully executed action arn:aws:sns:...:PrecioVivoAlarmas-Alertas...
+```
+
+Las alarmas viven en su **propio stack**: si mañana se rehace la Fase 3,
+`cdk destroy PrecioVivoFase3` se llevaría las alarmas justo cuando más falta
+hacen. Coste: 0,00 USD (CloudWatch regala 10 alarmas, SNS 1.000 correos/mes).
+
+**Falta suscribir un buzón.** Es lo único que no se puede automatizar: AWS exige
+confirmar la suscripción desde el propio correo.
+
+```bash
+aws sns subscribe --topic-arn arn:aws:sns:us-east-1:813559109370:PrecioVivoAlarmas-Alertas03FB113A-9bR7KJDvoN2R   --protocol email --notification-endpoint tu@correo
+```
+
+---
+
+## 8. Lo abierto, por orden de retorno
+
+1. **Suscribir un correo al tema SNS** (comando arriba). Sin eso las alarmas
+   disparan al vacío.
+2. **Rotar las tres claves.**
+3. **Resolver el acceso a SISAP desde AWS** —otra región, un proxy peruano— o
    aceptar el portátil como dependencia declarada.
-5. **Bedrock**, que está escrito, probado y deliberadamente apagado: no tiene
+4. **Bedrock**, que está escrito, probado y deliberadamente apagado: no tiene
    capa gratuita y el requisito vigente es gasto cero.
 
 ### Nota sobre la primera corrida autónoma

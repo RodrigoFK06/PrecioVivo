@@ -32,6 +32,7 @@ from aws_cdk import BundlingOptions
 from aws_cdk import aws_lambda as lambda_
 
 from precio_vivo.fase1_stack import Fase1Stack
+from precio_vivo.alarmas_stack import AlarmasStack
 from precio_vivo.fase3_stack import Fase3Stack
 from precio_vivo.sonda_waf_stack import SondaWafStack
 
@@ -170,12 +171,21 @@ fase1 = Fase1Stack(
     app, "PrecioVivoFase1", env=entorno,
     description="Precio Vivo Fase 1: snapshot en S3 servido por Lambda con Function URL",
 )
-Fase3Stack(
+fase3 = Fase3Stack(
     app, "PrecioVivoFase3", env=entorno,
     bucket=fase1.bucket,
     activos={n: _activo(n)
              for n in ("ingesta", "forecast", "export", "indice", "publicar")},
     description="Precio Vivo Fase 3: ingesta diaria con EventBridge Scheduler y Step Functions",
+)
+# Las alarmas van en su propio stack: sobreviven a que se rehaga una fase. El
+# correo se pasa por contexto y no se escribe aquí — este repositorio es público.
+#     cdk deploy PrecioVivoAlarmas -c correo_alertas=tu@correo
+AlarmasStack(
+    app, "PrecioVivoAlarmas", env=entorno,
+    arn_maquina=fase3.arn_maquina,
+    correo=app.node.try_get_context("correo_alertas"),
+    description="Precio Vivo: alarmas de la tubería diaria",
 )
 SondaWafStack(
     app, "PrecioVivoSondaWaf", env=entorno,
