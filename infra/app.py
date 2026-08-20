@@ -1,5 +1,11 @@
-#!/usr/bin/env python
 """Entrada de la app CDK de Precio Vivo.
+
+Sin shebang a propósito: este archivo NO se ejecuta directamente. Lo invoca CDK
+con el intérprete que declara la clave `app` de `cdk.json`, así que un
+`#!/usr/bin/env python` describiría mal cómo se usa. En Linux, además, sobre un
+archivo sin permiso de ejecución es un aviso del linter — y ése solo aparece en
+CI: los permisos POSIX no existen igual en Windows, así que `ruff` en local no
+puede verlo.
 
 Antes de sintetizar, ensambla en `build/` un directorio por paquete de Lambda con
 las fuentes que cada uno necesita. Las DEPENDENCIAS no se instalan aquí: las
