@@ -510,7 +510,14 @@ def answer_with_context(pregunta: str, contexto: str, catalogo: list[dict]) -> d
         texto = (data.get("texto") or "").strip()
         slugs = [s for s in (data.get("slugs") or []) if isinstance(s, str)][:8]
         if texto:
-            return {"texto": texto, "slugs": slugs, "fuente": "llm-rag"}
+            # `uso` es ADITIVO: quien no lo mire sigue funcionando igual. Existe
+            # porque el coste por consulta no se puede vigilar si no se mide, y
+            # medirlo desde fuera obligaría a estimar el tamaño del prompt en vez
+            # de leer lo que el proveedor cobró.
+            u = getattr(resp, "usage", None)
+            uso = {"entrada": getattr(u, "prompt_tokens", None),
+                   "salida": getattr(u, "completion_tokens", None)} if u else None
+            return {"texto": texto, "slugs": slugs, "fuente": "llm-rag", "uso": uso}
     except Exception:
         pass
     return fb

@@ -101,6 +101,20 @@ jobs:
         # con `--embedder local`.
         run: python evals/run_retrieval.py --umbral 0.9 -v
 
+      - name: Generación (invención de cifras y abstención)
+        env:
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+        # Necesita el modelo REAL, así que solo corre si el secreto existe. Sin
+        # él, el script lo dice y sale con 0 en vez de inventar un número: medir
+        # "0 invenciones" sobre respuestas de plantilla seria mentir con una
+        # metrica.
+        #
+        # El umbral es 0.0 a proposito. En recuperación un umbral de 0,9 tiene
+        # sentido —siempre habra casos limite— pero aqui no: la promesa del
+        # prompt es "nunca inventes cifras", y una promesa con margen de
+        # tolerancia no es una promesa.
+        run: python evals/run_generacion.py --umbral 0.0
+
       - name: Reporte comparativo de granularidad
         env:
           PRECIOVIVO_EMBED_PROVIDER: fake

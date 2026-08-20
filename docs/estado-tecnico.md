@@ -65,7 +65,7 @@ portátil.
 | `web/app` | 1.332 | 11 |
 | `web/lib` | 1.286 | 4 |
 
-**435 pruebas** de pipeline y **218** del sitio, 4 saltadas (dos exigen
+**447 pruebas** de pipeline y **218** del sitio, 4 saltadas (dos exigen
 Postgres, dos son integraciones lentas tras una variable de entorno).
 
 El CI las corre en cada push, en cuatro trabajos independientes para que un fallo
@@ -187,6 +187,33 @@ falta.
 duplicado en Python y TypeScript por necesidad. Python genera un fixture de 43
 casos y el TypeScript tiene que reproducirlo. Es la respuesta correcta a una
 duplicación que no se puede eliminar.
+
+**Evaluación en las dos capas, medida por separado.** La recuperación tiene
+umbral en CI desde hace semanas (recall@10 = 1.000, MRR 0.822, gold set de 32
+casos). La generación se añadió después y mide lo que la recuperación no puede
+ver:
+
+| | |
+|---|---|
+| Cifras afirmadas en 32 respuestas | **352** |
+| Sin respaldo en el contexto | **0** (0,0 %) |
+| Abstenciones correctas | **2 / 2** |
+| Coste por consulta | **USD 0,001437** |
+
+El caso que justifica separarlas: `papaya-no-es-papa` sigue arrastrando chunks de
+papa en la recuperación —son las 2 violaciones que el arnés reporta— y aun así la
+respuesta se abstiene. Una violación de recuperación **no** se convirtió en un
+fallo de respuesta, y sin medir las dos capas eso sería invisible en ambos
+sentidos.
+
+La comprobación es determinista y sin juez LLM: cada número de la respuesta tiene
+que estar en el contexto o derivarse de él por resta o variación porcentual. Se
+pierde poder —no mide utilidad ni razonamiento— y se gana reproducibilidad.
+
+**Y el detector se prueba contra invenciones conocidas, no contra su salida.** La
+primera versión reportó «203 cifras, 0 invenciones» y era falso: descartaba todo
+valor menor que 10 para evitar ruido y con eso descartaba **todos los precios**.
+Doce pruebas fijan ese caso por nombre.
 
 **Guards sobre el artefacto, no solo sobre el código.** Nueve pruebas marcadas
 `publicado` verifican el índice que se sirve: que existan las cuatro partes, que
