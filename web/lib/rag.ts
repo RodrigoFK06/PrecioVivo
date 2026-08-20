@@ -27,8 +27,12 @@ import { promises as fs } from "fs";
 import path from "path";
 import { gunzipSync } from "zlib";
 
-const EMBED_BASE_URL = process.env.EMBED_BASE_URL ?? "https://api.openai.com/v1";
-const EMBED_MODEL = process.env.EMBED_MODEL ?? "text-embedding-3-small";
+const EMBED_BASE_URL = process.env.EMBED_BASE_URL ?? "https://api.jina.ai/v1";
+// Espejo de `embeddings.EMBED_MODEL`. El default describe el índice que este
+// sitio consulta de verdad; ver el comentario largo allí. Si aquí quedara un
+// modelo que no es el del artefacto, perder la variable de entorno apagaría la
+// recuperación vectorial SIN error visible.
+const EMBED_MODEL = process.env.EMBED_MODEL ?? "jina-embeddings-v3";
 const EMBED_DIMS = Number(process.env.EMBED_DIMS ?? "256");
 const EMBED_API_KEY = process.env.EMBED_API_KEY ?? process.env.OPENAI_API_KEY;
 

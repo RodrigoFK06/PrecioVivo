@@ -49,8 +49,19 @@ except Exception:
     pass
 
 # --- Proveedor de API (OpenAI-compatible /embeddings) ---------------------
-EMBED_BASE_URL = os.environ.get("EMBED_BASE_URL", "https://api.openai.com/v1")
-EMBED_MODEL = os.environ.get("EMBED_MODEL", "text-embedding-3-small")
+# LOS DEFAULTS DESCRIBEN EL DESPLIEGUE REAL, no una opción genérica.
+#
+# Antes caían a OpenAI/text-embedding-3-small, que no se usa en ningún sitio de
+# este proyecto: ni en Vercel, ni en la Lambda de indexado, ni en el .env del
+# mantenedor. Un default que nadie usa no es neutral, es una trampa: si alguna
+# vez falta la variable, el sistema arranca con una firma de embebedor DISTINTA
+# a la del índice publicado, `rag.ts` captura el desajuste, cae al piso
+# determinista y sigue etiquetando la respuesta como 'llm-rag'.
+#
+# Con estos defaults, perder la variable degrada a "falta la clave" —visible—
+# en vez de a "recuperación vectorial apagada en silencio".
+EMBED_BASE_URL = os.environ.get("EMBED_BASE_URL", "https://api.jina.ai/v1")
+EMBED_MODEL = os.environ.get("EMBED_MODEL", "jina-embeddings-v3")
 # 256 dims: text-embedding-3-* admite truncar dimensiones con calidad casi
 # intacta, y a 256 el índice publicado pesa ~4x menos. Ver README.
 EMBED_DIMS = int(os.environ.get("EMBED_DIMS", "256"))

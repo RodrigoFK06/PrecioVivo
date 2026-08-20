@@ -46,16 +46,25 @@ RECONSTRUIR = (
 )
 
 
+# La firma con la que PRODUCCIÓN embebe la consulta. Declarada aquí, no leída
+# del entorno.
+#
+# Antes se derivaba de `embeddings.EMBED_MODEL`, con la idea de que "el test y
+# producción usan las mismas variables y no pueden discrepar". La premisa era
+# falsa: producción es Vercel, y su configuración vive en el panel de Vercel, no
+# en el `.env` de quien corre las pruebas. En local coincidía por casualidad —
+# `pipeline/.env` tiene el valor bueno— y en CI, que no tiene ese archivo, el
+# test caía al default y fallaba. Un guard que depende de un archivo no
+# versionado no es un guard.
+#
+# Cambiar este valor significa reindexar los 9.281 chunks Y actualizar la
+# variable en Vercel y en la Lambda de indexado. Que sea un cambio deliberado y
+# revisable es justamente el punto.
+FIRMA_EN_PRODUCCION = "api:jina-embeddings-v3:256"
+
+
 def firma_de_produccion() -> str:
-    """La firma que `web/lib/rag.ts` construirá en tiempo de request.
-
-    Se deriva de las MISMAS variables (`EMBED_MODEL`, `EMBED_DIMS`) y los mismos
-    valores por defecto que usa el sitio, para que este test y producción no
-    puedan discrepar.
-    """
-    from preciovivo.embeddings import EMBED_DIMS, EMBED_MODEL
-
-    return f"api:{EMBED_MODEL}:{EMBED_DIMS}"
+    return FIRMA_EN_PRODUCCION
 
 
 def meta_de(parte: str) -> dict:
