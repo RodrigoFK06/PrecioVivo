@@ -37,3 +37,7 @@ dist/
 Thumbs.db
 .idea/
 .vscode/
+
+# --- Grafo de conocimiento (graphify) ---
+# Derivado del codigo: se regenera con `graphify . --code-only`.
+graphify-out/
