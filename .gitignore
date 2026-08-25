@@ -41,3 +41,11 @@ Thumbs.db
 # --- Grafo de conocimiento (graphify) ---
 # Derivado del codigo: se regenera con `graphify . --code-only`.
 graphify-out/
+
+# --- Banco de pruebas del lakehouse ---
+# El CSV del dato real se regenera con `python lakehouse/exportar_real.py` en un
+# segundo, cambia cada dia con la corrida de la tuberia, y son 2 MB. El PERFIL
+# (perfil_gmml.json, 13,5 KB) SI se versiona: es el artefacto que viaja a
+# Databricks y el que hay que poder auditar.
+lakehouse/gmml_real.csv
+lakehouse/*.parquet
