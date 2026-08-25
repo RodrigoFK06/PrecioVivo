@@ -183,6 +183,13 @@ Cada peldaño se **declara** en la respuesta y en la interfaz. No es cosmético:
 
 Ya no es una promesa: el índice publicado se construyó con `jina-embeddings-v3` y el gold set se corrió contra él.
 
+> **Esta tabla es de la versión de 32 casos del gold set.** Hoy son 62, con un
+> reparto 70/30 fácil-adversarial. No se ha vuelto a correr contra Jina porque
+> reindexar cuesta cuota y el backfill histórico va a obligar a rehacerlo de todos
+> modos; se actualizará entonces. Las cifras de abajo siguen siendo ciertas para lo
+> que midieron, y por eso se dejan con su fecha en vez de borrarlas o de
+> reemplazarlas por números de otro embebedor, que no serían comparables.
+
 | | FakeEmbedder | Jina (real) |
 |---|---|---|
 | recall@k | 1.000 | **1.000** |

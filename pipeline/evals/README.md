@@ -48,8 +48,24 @@ premiaría el grano equivocado.
 
 ## El gold set
 
-`retrieval_gold.json` — 32 casos en 8 categorías: producto+tiempo, anomalía,
-estacional, agregada, ficha, agrupación, desambiguación y sin-respuesta.
+`retrieval_gold.json` — **62 casos en 16 categorías**, repartidos **43 fáciles
+(69,4 %) / 19 adversariales (30,6 %)**.
+
+El tope del 70 % de fáciles **lo fija una prueba**, no la buena voluntad
+(`tests/test_evals_goldset.py`). Un gold set crece por donde es cómodo crecer, y
+lo cómodo es añadir preguntas naturales: cada producto nuevo del catálogo sugiere
+tres. Los adversariales hay que pensarlos. Sin un tope que falle, la proporción
+se erosiona sola y el recall sube sin que el sistema haya mejorado — la métrica
+se vuelve más fácil, no el producto mejor.
+
+| dificultad | qué es |
+|---|---|
+| `facil` | pregunta natural, con respuesta directa en el corpus |
+| `adversarial` | construido para que el sistema falle de una forma concreta: premisa falsa, producto inexistente, colisión de nombres, cruce de mercados, instrucción hostil, fuera de rango, o la regresión de un fallo real |
+
+Familias adversariales, todas con al menos un caso y ninguna con más de la mitad
+del cupo (ambas cosas son pruebas): premisa-falsa, fuera-de-rango, inyección,
+cruce-de-mercados, sin-respuesta, comparación, otro-mercado, unidad, pronóstico.
 
 **Los predicados son granularity-independent.** Un caso pide "un chunk con
 `slug=brocoli` que cubra el 2025-02-19", no un id literal. Por eso el mismo gold
@@ -57,43 +73,75 @@ set evalúa día, semana y mes sin reescribirse: los ids cambian, el hecho no.
 
 ```json
 {
-  "id": "brocoli-alza-feb-2025",
-  "pregunta": "¿por qué subió tanto el brócoli en febrero de 2025?",
+  "id": "brocoli-premisa-falsa-bajada",
+  "pregunta": "¿por qué bajó tanto el brócoli en febrero de 2025?",
+  "dificultad": "adversarial",
   "debe_recuperar": [
     {"slug": "brocoli", "tipo": "producto-periodo", "cubre_fecha": "2025-02-19"}
   ],
-  "nota": "Alza real de +241,6% en la semana 2025-W08."
+  "debe_afirmar": ["241"],
+  "nota": "La premisa es falsa: subió +241,6%."
 }
 ```
 
-Predicados disponibles: `id`, `slug`, `tipo`, `cubre_fecha` (solapamiento del
-rango del chunk), `texto_contiene`.
+Predicados de RECUPERACIÓN: `id`, `slug`, `tipo`, `cubre_fecha` (solapamiento del
+rango del chunk), `texto_contiene`, y `no_debe_recuperar` (falso positivo).
+Predicados de GENERACIÓN, que consume `run_generacion.py`: `debe_abstenerse`,
+`debe_afirmar` (basta una subcadena), `no_debe_afirmar` (ninguna).
+
+### Cómo leer el recall, que es lo que más se malinterpreta
+
+`recall@k` sale **1,000** y eso NO significa que la búsqueda sea perfecta.
+Significa que el **piso determinista** hace casi todo el trabajo. Medido el
+2026-08-25 bajando k:
+
+| k | recall@k | solo lo recuperado |
+|---|---|---|
+| 1 | 0,983 | 0,299 |
+| 2 | 0,991 | 0,385 |
+| 3 | 0,991 | 0,425 |
+| 5 | 0,991 | 0,675 |
+| 8 | **1,000** | **0,750** |
+
+El piso son ocho chunks que entran pase lo que pase, así que el recall está
+saturado por construcción. La cifra que mide la búsqueda vectorial es **`solo lo
+recuperado`**, y el MRR (0,818). Publicar el 1,000 a secas sería un número
+honesto usado de forma engañosa.
 
 ### Los hechos son reales
 
-Cada cifra citada en `nota` se midió sobre `web/data/snapshot.json`. Ninguna es
-inventada. Para reproducirlas:
+Cada cifra citada en `nota` se midió sobre `web/data/snapshot.json` o sobre el
+índice publicado. Ninguna es inventada. Dos pruebas lo sostienen: todo predicado
+positivo tiene que ser **alcanzable** contra el índice publicado, y todo tipo de
+chunk del corpus tiene que tener **al menos un predicado que lo exija**.
 
-```bash
-python -c "
-from preciovivo.corpus import cargar_snapshot, anomalias_historicas
-snap = cargar_snapshot('../web/data/snapshot.json')
-an = sorted(anomalias_historicas(snap), key=lambda a: -abs(a['z']))
-for a in an[:10]: print(a['nombre'], a['tipo'], a['fecha'], a['z'])
-"
-```
+### Casos sin predicado positivo
 
-### Casos sin respuesta
+Cuatro casos no tienen nada que recuperar y existen para verificar que el sistema
+no fabrica una coincidencia: `producto-inexistente-salmon`,
+`inyeccion-olvida-el-catalogo`, `papa-fuera-de-rango-2018` y
+`domingo-sin-publicacion`. Todos declaran `debe_abstenerse` o `debe_afirmar`: un
+caso sin nada que comprobar no falla nunca, y hay una prueba que lo impide.
 
-Dos casos (`producto-inexistente-salmon`, `pollo-no-esta-en-gmml`) no tienen
-predicado positivo: no hay nada correcto que recuperar. Existen para verificar
-que el sistema no rompe y que no fabrica una coincidencia. `papaya-no-es-papa`
-solo mide el **falso positivo**: si "papaya" arrastrara las papas por prefijo, la
-respuesta mezclaría dos productos distintos.
+### El caso que caducó
+
+`papaya-no-es-papa` nació exigiendo abstención — el GMML no vendía papaya — y
+**caducó en silencio** cuando el boletín 338 metió `PAPAYA SELVA` en el MMF2.
+Durante ese tiempo la evaluación premiaba la respuesta equivocada. Hoy es un caso
+de `cruce-de-mercados` y hay un guard que compara el gold set contra el catálogo
+publicado en las dos direcciones, para que no vuelva a pasar.
 
 ## Lo que esto NO mide todavía
 
-Solo **recuperación**. No mide la calidad de la respuesta que el modelo escribe
-sobre ese contexto — si cita bien las cifras, si respeta la regla de no atribuir
-causas, si dice "no sé" cuando corresponde. Eso es el bloque 4, y este harness es
-su base.
+**58 de 62 casos** tienen predicado de recuperación y se miden sin coste, sin red
+y sin claves. Solo **14** tienen predicado de generación, y esos exigen el modelo
+real (`run_generacion.py`, con `AI_API_KEY`).
+
+Ahí está el hueco que importa: **14 de los 19 adversariales viven en la capa de
+generación**, así que la mayor parte del valor adversarial de este gold set no se
+mide en cada corrida. La recuperación puede traer el chunk que contradice una
+premisa falsa y el modelo tragársela igual — y `run_retrieval.py` daría 1,000.
+
+Tampoco se mide si la respuesta razona bien ni si atribuye causas que el dato no
+respalda. `run_generacion.py` mide invención de CIFRAS y contenido obligado o
+prohibido por subcadena: determinista y estrecho, a propósito.

@@ -188,10 +188,18 @@ duplicado en Python y TypeScript por necesidad. Python genera un fixture de 43
 casos y el TypeScript tiene que reproducirlo. Es la respuesta correcta a una
 duplicación que no se puede eliminar.
 
-**Evaluación en las dos capas, medida por separado.** La recuperación tiene
-umbral en CI desde hace semanas (recall@10 = 1.000, MRR 0.822, gold set de 32
-casos). La generación se añadió después y mide lo que la recuperación no puede
-ver:
+**Evaluación en las dos capas, medida por separado.** El gold set son **62 casos**
+con un reparto **70/30 fácil-adversarial que impone una prueba**, no la costumbre.
+La recuperación tiene umbral en CI (recall@k 1.000, MRR 0.818 con embebedor local).
+Ese 1.000 está **saturado por el piso determinista** y no dice que la búsqueda sea
+perfecta: bajando a k=1 el recall apenas cae a 0.983, mientras «solo lo recuperado»
+—la cifra que sí mide la búsqueda— se desploma de 0.750 a 0.299.
+
+El hueco que queda: **14 de los 19 casos adversariales viven en la capa de
+generación**, que solo se mide con el modelo real. La recuperación puede traer el
+chunk que contradice una premisa falsa y el modelo tragársela igual, y
+`run_retrieval.py` daría 1.000 igualmente. La generación mide lo que la
+recuperación no puede ver:
 
 | | |
 |---|---|

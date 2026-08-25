@@ -210,3 +210,83 @@ def test_la_inyeccion_dictando_un_precio_se_caza(afirmaciones):
 def test_un_caso_sin_predicados_adversariales_no_aporta_campos(afirmaciones):
     """Para que `resumir` pueda distinguir «no aplica» de «falló»."""
     assert afirmaciones("lo que sea", {"id": "x"}) == {}
+
+
+# --------------------------------------------------------------------------- #
+# 3. Composición del gold set
+# --------------------------------------------------------------------------- #
+# Tope declarado: como mucho el 70 % de los casos pueden ser fáciles. El resto
+# son adversariales — construidos para que el sistema falle de una forma
+# concreta y conocida.
+#
+# POR QUÉ UN TOPE Y NO UN OBJETIVO. Un gold set crece por donde es cómodo
+# crecer, y lo cómodo es añadir preguntas naturales: cada producto nuevo del
+# catálogo sugiere tres. Los casos adversariales hay que pensarlos. Sin un tope
+# que falle, la proporción se erosiona sola y el recall sube sin que el sistema
+# haya mejorado — la métrica se vuelve más fácil, no el producto mejor.
+TOPE_FACILES = 0.70
+MINIMO_ADVERSARIALES = 0.30
+
+
+def _reparto(gold):
+    casos = gold["casos"]
+    adv = [c for c in casos if c["dificultad"] == "adversarial"]
+    return len(casos), len(adv), len(casos) - len(adv)
+
+
+def test_todos_los_casos_declaran_dificultad(gold):
+    validas = {"facil", "adversarial"}
+    malos = [(c["id"], c.get("dificultad")) for c in gold["casos"]
+             if c.get("dificultad") not in validas]
+    assert not malos, f"casos sin dificultad válida: {malos}"
+
+
+def test_los_faciles_no_pasan_del_tope(gold):
+    n, adv, faciles = _reparto(gold)
+    assert faciles / n <= TOPE_FACILES, (
+        f"{faciles}/{n} fáciles ({faciles / n:.1%}) supera el tope del "
+        f"{TOPE_FACILES:.0%}. Añade casos adversariales, no quites fáciles: "
+        "el gold set no debería encoger para cumplir una proporción.")
+
+
+def test_hay_bastantes_adversariales(gold):
+    n, adv, _ = _reparto(gold)
+    assert adv / n >= MINIMO_ADVERSARIALES, (
+        f"solo {adv}/{n} adversariales ({adv / n:.1%}), por debajo del "
+        f"{MINIMO_ADVERSARIALES:.0%}")
+
+
+def test_las_familias_adversariales_estan_todas_representadas(gold):
+    """Que haya un 30 % no basta si son treinta variaciones de lo mismo.
+
+    Cada familia es un modo de fallo distinto y ninguna puede quedarse vacía.
+    """
+    familias = {"premisa-falsa", "fuera-de-rango", "inyeccion",
+                "cruce-de-mercados", "sin-respuesta", "comparacion",
+                "otro-mercado", "unidad", "pronostico"}
+    presentes = {c["categoria"] for c in gold["casos"]
+                 if c["dificultad"] == "adversarial"}
+    assert familias <= presentes, f"familias adversariales sin ningún caso: {familias - presentes}"
+
+
+def test_ninguna_categoria_adversarial_carga_sola_con_el_cupo(gold):
+    """Ninguna familia puede aportar más de la mitad de los adversariales."""
+    import collections
+    cuenta = collections.Counter(c["categoria"] for c in gold["casos"]
+                                 if c["dificultad"] == "adversarial")
+    _, adv, _ = _reparto(gold)
+    dominantes = {k: v for k, v in cuenta.items() if v > adv / 2}
+    assert not dominantes, f"una sola familia acapara los adversariales: {dominantes}"
+
+
+def test_cada_tipo_de_chunk_tiene_al_menos_un_predicado(gold, chunks):
+    """Un tipo que ningún caso exige es un tipo que nadie evalúa.
+
+    `evento-anomalia` estuvo así: 617 chunks en el corpus y ni un predicado que
+    los fijara, mientras cuatro casos de la categoría "anomalia" no declaraban
+    tipo y podían satisfacerse con un producto-periodo cualquiera.
+    """
+    en_corpus = {c["tipo"] for c in chunks}
+    exigidos = {p["tipo"] for c in gold["casos"]
+                for p in (c.get("debe_recuperar") or []) if "tipo" in p}
+    assert en_corpus <= exigidos, f"tipos sin ningún predicado que los exija: {en_corpus - exigidos}"
