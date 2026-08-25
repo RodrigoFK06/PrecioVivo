@@ -616,18 +616,18 @@
    "id": "aji-panca-premisa-falsa-volumen",
    "categoria": "premisa-falsa",
    "dificultad": "adversarial",
-   "pregunta": "¿por qué se desplomó el ingreso de ají panca el 20 de agosto de 2026?",
+   "pregunta": "¿por qué se desplomó el ingreso de ají panca el 2 de marzo de 2026?",
    "debe_recuperar": [
     {
      "slug": "aji-panca",
      "tipo": "evento-anomalia",
-     "cubre_fecha": "2026-08-20"
+     "cubre_fecha": "2026-03-02"
     }
    ],
    "debe_afirmar": [
-    "31"
+    "44"
    ],
-   "nota": "Premisa falsa sobre VOLUMEN, no sobre precio. Ese dia hubo una anomalia de volumen AL ALZA: 31 t, a 4,0 desviaciones robustas de la historia reciente. Las otras dos premisas falsas del gold set son de precio; el volumen es la otra magnitud que el producto publica y tenia cero cobertura adversarial."
+   "nota": "Premisa falsa sobre VOLUMEN, no sobre precio. Ese dia hubo una anomalia de volumen AL ALZA: 44 t, a 10,7 desviaciones robustas de la historia reciente. Las otras dos premisas falsas del gold set son de precio; el volumen es la otra magnitud que el producto publica. Anclado en el tramo HISTORICO del indice, no en el ultimo dia. La primera version apuntaba al 2026-08-20 y caduco en cinco dias: rag-reciente guarda un solo dia y rueda, asi que cualquier predicado por encima del fin del historico se rompe solo."
   },
   {
    "id": "papaya-mercado-equivocado",
@@ -805,43 +805,43 @@
    "id": "coliflor-anomalia-precio",
    "categoria": "anomalia",
    "dificultad": "facil",
-   "pregunta": "¿hubo alguna anomalía de precio en la coliflor el 20 de agosto de 2026?",
+   "pregunta": "¿hubo una anomalía de precio en la coliflor el 8 de noviembre de 2024?",
    "debe_recuperar": [
     {
      "slug": "coliflor",
      "tipo": "evento-anomalia",
-     "cubre_fecha": "2026-08-20"
+     "cubre_fecha": "2024-11-08"
     }
    ],
-   "nota": "Primer caso que EXIGE el tipo evento-anomalia. Los cuatro casos de anomalia anteriores no declaran tipo, asi que 617 chunks del corpus no tenian ni un predicado que los fijara. Precio S/ 1.11/kg, 3,8 desviaciones robustas."
+   "nota": "Primer caso que EXIGE el tipo evento-anomalia. Los cuatro casos de anomalia anteriores no declaran tipo, asi que 617 chunks del corpus no tenian ni un predicado que los fijara. Precio S/ 0.49/kg, 13,5 desviaciones robustas: la anomalia mas fuerte de la coliflor en toda la serie.\nPREGUNTA Y PREDICADO NOMBRAN EL MISMO DIA, y no es un detalle. La primera version preguntaba por 'noviembre de 2024' y fijaba el dia 11; el sistema devolvia las anomalias del 5, 6, 7 y 8 -- respuesta correcta a la pregunta que se hizo -- y el caso salia rojo. El fallo era del predicado, mas especifico que su propia pregunta, no de la recuperacion. La coliflor tiene cinco anomalias esa semana y el piso solo reserva tres plazas (PISO_ANOMALIAS=3).\nAnclado en el tramo HISTORICO del indice: rag-reciente guarda un solo dia y rueda cada manana."
   },
   {
    "id": "aji-panca-anomalia-volumen",
    "categoria": "anomalia",
    "dificultad": "facil",
-   "pregunta": "¿cuándo hubo un ingreso inusual de ají panca?",
+   "pregunta": "¿cuándo hubo un ingreso inusual de ají panca en marzo de 2026?",
    "debe_recuperar": [
     {
      "slug": "aji-panca",
      "tipo": "evento-anomalia",
-     "cubre_fecha": "2026-08-20"
+     "cubre_fecha": "2026-03-02"
     }
    ],
-   "nota": "Anomalia de VOLUMEN (31 t, 4,0 desviaciones), no de precio. Las dos clases existen y se distinguen en el texto del chunk."
+   "nota": "Anomalia de VOLUMEN (44 t, 10,7 desviaciones), no de precio. Las dos clases existen y se distinguen en el texto del chunk. Anclado en el tramo HISTORICO del indice, no en el ultimo dia. La primera version apuntaba al 2026-08-20 y caduco en cinco dias: rag-reciente guarda un solo dia y rueda, asi que cualquier predicado por encima del fin del historico se rompe solo."
   },
   {
    "id": "papa-canchan-anomalia-precio",
    "categoria": "anomalia",
    "dificultad": "facil",
-   "pregunta": "¿pasó algo raro con la papa canchán el 20 de agosto de 2026?",
+   "pregunta": "¿pasó algo raro con la papa canchán el 3 de junio de 2026?",
    "debe_recuperar": [
     {
      "slug": "papa-canchan",
      "tipo": "evento-anomalia",
-     "cubre_fecha": "2026-08-20"
+     "cubre_fecha": "2026-06-03"
     }
    ],
-   "nota": "Precio S/ 1.70/kg, 4,5 desviaciones. Ademas nombra una variedad de papa sin arrastrar la familia."
+   "nota": "Precio S/ 1.05/kg, 10,1 desviaciones. Ademas nombra una variedad de papa sin arrastrar la familia. Anclado en el tramo HISTORICO del indice, no en el ultimo dia. La primera version apuntaba al 2026-08-20 y caduco en cinco dias: rag-reciente guarda un solo dia y rueda, asi que cualquier predicado por encima del fin del historico se rompe solo."
   },
   {
    "id": "camu-camu-precio",
@@ -910,17 +910,17 @@
    "nota": "La ficha trae minimo, maximo, promedio y numero de dias con dato."
   },
   {
-   "id": "mercado-dia-20-agosto-2026",
+   "id": "mercado-dia-7-agosto-2026",
    "categoria": "agregada",
    "dificultad": "facil",
-   "pregunta": "¿cuánto ingresó al mercado el 20 de agosto de 2026?",
+   "pregunta": "¿cuánto ingresó al mercado el 7 de agosto de 2026?",
    "debe_recuperar": [
     {
      "tipo": "mercado-dia",
-     "cubre_fecha": "2026-08-20"
+     "cubre_fecha": "2026-08-07"
     }
    ],
-   "nota": "7 515 t ese dia, con 72 productos con precio. Ultimo dia publicado del corpus."
+   "nota": "6 950 t ese dia, con 69 productos con precio. Ultimo dia del tramo historico, que es el mas reciente que se puede anclar sin que caduque. Anclado en el tramo HISTORICO del indice, no en el ultimo dia. La primera version apuntaba al 2026-08-20 y caduco en cinco dias: rag-reciente guarda un solo dia y rueda, asi que cualquier predicado por encima del fin del historico se rompe solo."
   },
   {
    "id": "acelga-ingreso-semanal",
@@ -941,12 +941,12 @@
    "id": "pregunta-compuesta-dos-fechas",
    "categoria": "producto+tiempo",
    "dificultad": "adversarial",
-   "pregunta": "¿cuánto está la papa blanca hoy y qué pasó con el brócoli en febrero de 2025?",
+   "pregunta": "¿cuánto estaba la papa blanca a fines de enero de 2026 y qué pasó con el brócoli en febrero de 2025?",
    "debe_recuperar": [
     {
      "slug": "papa-blanca",
      "tipo": "producto-periodo",
-     "cubre_fecha": "2026-08-20"
+     "cubre_fecha": "2026-01-21"
     },
     {
      "slug": "brocoli",
@@ -954,7 +954,7 @@
      "cubre_fecha": "2025-02-19"
     }
    ],
-   "nota": "Dos intenciones y DOS marcos temporales en una sola pregunta. detectar_rango_fechas devuelve un solo rango, y aqui se queda con 2025-02-01..2025-02-28: el 'hoy' se pierde (verificado con fecha_ref 2026-08-20). Que el caso pase igual no es suerte del filtro sino del PISO, que ante un rango acotado ordena en_rango + perfil + fuera[:N] y por eso cuela tambien la semana reciente de la papa. Es exactamente la clase de caso que conviene tener fijado: pasa por un mecanismo distinto del que uno supondria, asi que tocar el piso sin tocar el parser de fechas lo rompe en silencio."
+   "nota": "CASO QUE HOY FALLA, y esa es su razon de ser. Dos intenciones y DOS marcos temporales separados por casi un ano. `detectar_rango_fechas` devuelve UN solo rango: se queda con enero de 2026 y el brocoli de febrero de 2025 queda fuera del filtro. Medido: recupera papa-blanca y brocoli, pero del brocoli trae semanas de 2026, no la de la pregunta.\nLa version anterior de este caso decia 'hoy' en vez de 'a fines de enero de 2026' y PASABA -- pero no por merito del parser de fechas sino porque el piso, ante un rango acotado, ordena en_rango + perfil + fuera[:N] y colaba la otra fecha por la puerta de atras. Al re-anclar el caso para que no caducara, el rescate dejo de funcionar y aparecio la limitacion que siempre estuvo ahi.\nSe deja en rojo declarado, no se ablanda: soportar dos rangos en una pregunta es un cambio en el parser de consultas y merece su propia decision. El recall agregado lo absorbe (0,974 sobre un umbral de 0,9), asi que CI sigue en verde mientras el numero dice la verdad."
   }
  ]
 }

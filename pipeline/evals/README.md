@@ -108,6 +108,24 @@ saturado por construcción. La cifra que mide la búsqueda vectorial es **`solo 
 recuperado`**, y el MRR (0,818). Publicar el 1,000 a secas sería un número
 honesto usado de forma engañosa.
 
+### Las fechas se anclan en el tramo estable
+
+El índice se publica en dos partes con vidas muy distintas:
+
+| parte | cubre | se rehace |
+|---|---|---|
+| `rag-historico` | 2024-07-01 → 2026-08-07 | de tarde en tarde: reindexar cuesta cuota |
+| `rag-reciente` | **un solo día** | cada mañana, con la corrida de la tubería |
+
+Un predicado con `cubre_fecha` posterior al fin del histórico **caduca solo**.
+Pasó: seis casos se anclaron en el último día publicado y murieron en cinco días,
+cuando la tubería avanzó. Hay una prueba que lo impide antes de que ocurra, no
+después.
+
+Los predicados **sin** `cubre_fecha` quedan fuera de esa regla a propósito: los
+del MMF2 y los perfiles solo viven en el tramo reciente y no pueden anclar fecha.
+Su validez la cubre la prueba de alcanzabilidad.
+
 ### Los hechos son reales
 
 Cada cifra citada en `nota` se midió sobre `web/data/snapshot.json` o sobre el

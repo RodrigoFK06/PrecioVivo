@@ -67,6 +67,26 @@ def chunks() -> list[dict]:
     return fuera
 
 
+@pytest.fixture(scope="module")
+def fin_historico() -> str:
+    """Ultima fecha del tramo ESTABLE del indice.
+
+    El indice se publica en dos partes con vidas muy distintas:
+
+        rag-historico   2024-07-01 .. una fecha que solo avanza al reindexar
+        rag-reciente    UN dia, y rueda cada manana
+
+    Reconstruir el historico cuesta cuota de embeddings, asi que se hace de
+    tarde en tarde; el reciente lo reescribe la tuberia todos los dias.
+    """
+    ruta = WEB_DATA / "rag-historico.json.gz"
+    if not ruta.exists():
+        pytest.skip(f"sin indice publicado en {ruta}")
+    with gzip.open(ruta, "rt", encoding="utf-8") as f:
+        ch = json.load(f)["chunks"]
+    return max(c["d1"] for c in ch if c.get("d1"))
+
+
 def _cumple(chunk: dict, pred: dict) -> bool:
     """Réplica mínima de `run_retrieval.cumple` sobre el chunk ya serializado.
 
@@ -290,3 +310,29 @@ def test_cada_tipo_de_chunk_tiene_al_menos_un_predicado(gold, chunks):
     exigidos = {p["tipo"] for c in gold["casos"]
                 for p in (c.get("debe_recuperar") or []) if "tipo" in p}
     assert en_corpus <= exigidos, f"tipos sin ningún predicado que los exija: {en_corpus - exigidos}"
+
+
+def test_ningun_predicado_se_ancla_en_la_ventana_volatil(gold, fin_historico):
+    """Una fecha por encima del fin del historico condena al caso a caducar.
+
+    Ocurrio de verdad, y el guard de arriba lo caza -- pero tarde, cuando el caso
+    ya esta roto. Seis casos nuevos se anclaron en el ultimo dia publicado y
+    murieron en cinco dias: `rag-reciente` guarda un solo dia y rueda cada
+    manana, asi que ese anclaje tenia fecha de caducidad desde que se escribio.
+
+    Esta prueba lo dice ANTES: no hace falta esperar a que la tuberia avance
+    para descubrir que un caso estaba mal pensado.
+
+    Los predicados SIN `cubre_fecha` no entran aqui a proposito. Los del MMF2 y
+    los perfiles solo viven en el tramo reciente y no pueden anclar fecha; su
+    validez la cubre `test_todo_predicado_positivo_es_alcanzable`.
+    """
+    tarde = []
+    for caso in gold["casos"]:
+        for pred in caso.get("debe_recuperar") or []:
+            f = pred.get("cubre_fecha")
+            if f and f > fin_historico:
+                tarde.append((caso["id"], f))
+    assert not tarde, (
+        f"predicados anclados despues del fin del tramo estable ({fin_historico}); "
+        f"caducaran en cuanto la tuberia avance: {tarde}")
