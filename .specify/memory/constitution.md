@@ -1,7 +1,10 @@
 <!--
 SYNC IMPACT REPORT
-Version change: (sin constitución previa) → 1.0.0
-Modified principles: ninguno (documento inicial)
+Version change: 1.0.0 → 1.0.1
+Modified principles: IV — se actualizan las cifras del rationale. Se citaba
+  «0,1711 contra 0,1476» y los valores vigentes en el snapshot publicado son
+  0,1795 contra 0,1587 sobre 529 días. El principio no cambia; cambia el dato
+  que lo ilustra, por aplicación del Principio I a la propia constitución.
 Added sections:
   - Core Principles I-V
   - Restricciones Técnicas
@@ -93,8 +96,10 @@ Reglas:
 - Mercados distintos NO se comparan ni se fusionan. Precio de cierre y promedio
   semanal son magnitudes distintas aunque compartan nombre.
 
-Rationale: con 537 días de historia el GBM se evalúa y pierde contra AR(1)
-(0,1711 contra 0,1476). Publicarlo es lo que hace creíbles los demás números.
+Rationale: con 529 días de historia el GBM se evalúa sobre los 72 productos y
+pierde contra AR(1): 0,1795 contra 0,1587 a un día, 0,4927 contra 0,4744 a siete.
+Publicarlo es lo que hace creíbles los demás números. (Medido el 2026-08-25 en
+forecastMeta.kill_gate.comparacion_modelos del snapshot publicado.)
 
 ### V. Permisos mínimos y coste conocido
 
@@ -137,7 +142,7 @@ el dato; su fallo NO puede impedir que se publique el reporte 335 del día.
 | Snapshot en memoria | 3,5 MB | ~15 MB: migrar a acceso por clave |
 | Estado de Step Functions | 36,6 KB de 256 KB | 510 productos |
 | Concurrencia de la cuenta | 8 de 10 | cuota no ajustable sin solicitud |
-| Cuota de Jina | 0,50 %/corrida | ~9 meses al ritmo actual |
+| Cuota de Jina | 0,50 %/corrida | ~9 meses al ritmo actual; el backfill histórico se proyecta en 27,7 % de una sola vez |
 | Paquete de Lambda | 207,6 MB | 250 MB sin comprimir |
 
 ## Flujo de Trabajo y Puertas de Calidad
@@ -181,4 +186,4 @@ sistema, `docs/aws.md` para las decisiones de infraestructura con su alternativa
 descartada, y `docs/postmortem-fallos-silenciosos.md` para el catálogo de fallos
 que estos principios existen para evitar.
 
-**Version**: 1.0.0 | **Ratified**: 2026-08-25 | **Last Amended**: 2026-08-25
+**Version**: 1.0.1 | **Ratified**: 2026-08-25 | **Last Amended**: 2026-08-25
