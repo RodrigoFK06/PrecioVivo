@@ -108,6 +108,49 @@ saturado por construcción. La cifra que mide la búsqueda vectorial es **`solo 
 recuperado`**, y el MRR (0,818). Publicar el 1,000 a secas sería un número
 honesto usado de forma engañosa.
 
+### Lo que esta muestra NO puede detectar
+
+Un intervalo ausente convierte cualquier movimiento en una mejora. Peor: una
+métrica que no puede moverse convierte cualquier trabajo en tiempo perdido.
+`run_retrieval.py` reporta las dos cosas en cada corrida.
+
+Con **58 casos evaluables**, comparando dos configuraciones sobre los mismos
+casos (diseño pareado, McNemar), la diferencia mínima detectable con α=0,05 y
+potencia 0,80 es:
+
+| tasa de discordancia | MDE |
+|---|---|
+| 5 % | **8,2 puntos** |
+| 10 % | 11,6 puntos |
+| 20 % | 16,5 puntos |
+
+`MDE = (z(α/2) + z(β)) · √(d/n)`. El diseño pareado no es un atajo barato: es el
+correcto. Tratar las mismas 58 preguntas como dos muestras independientes tira
+potencia a la basura y exigiría del orden de **686 casos por brazo** para 5
+puntos, que etiquetados a mano no van a existir.
+
+**Entonces la frase honesta es "con este gold set detecto 8 puntos, no 3".** No
+"mi sistema mejoró".
+
+Y el corolario, que el harness imprime solo:
+
+```
+recall@k              0.991   IC95 [0.923, 0.999]  (n=58, ancho 0.076)
+  MDE pareado          d=5%: 0.082  d=10%: 0.116  d=20%: 0.165
+  SATURADA: quedan 0.009 de margen al techo y el MDE mas optimista es 0.082.
+  Esta metrica NO puede demostrar una mejora aunque exista.
+solo lo recuperado    0.750   IC95 [0.625, 0.844]  (n=58, ancho 0.218)
+```
+
+`recall@k` tiene **0,9 puntos de margen** hasta el techo y necesitaría 8,2 para
+demostrar algo. Es aritméticamente incapaz de mostrar una mejora. `solo lo
+recuperado` tiene 25 puntos de recorrido: ésa es la métrica sobre la que se
+optimiza.
+
+Intervalos de **Wilson**, no de Wald. Con p cerca de 1 —que es donde vive este
+proyecto— Wald da intervalos que se salen de [0,1] y colapsan a ancho cero cuando
+p=1, afirmando certeza absoluta desde una muestra finita.
+
 ### Las fechas se anclan en el tramo estable
 
 El índice se publica en dos partes con vidas muy distintas:

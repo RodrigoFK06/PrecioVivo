@@ -34,6 +34,9 @@ from pathlib import Path
 
 # Ejecutable directamente desde pipeline/ sin instalar el paquete.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from estadistica import diagnostico, linea_mde  # noqa: E402
 
 from preciovivo.corpus import GRANULARIDADES, Chunk  # noqa: E402
 from preciovivo.embeddings import get_embedder  # noqa: E402
@@ -182,13 +185,24 @@ def por_categoria(filas: list[dict]) -> dict[str, tuple[float, int]]:
 def imprimir(res: dict, verboso: bool) -> None:
     print(f"\n--- granularidad={res['granularidad']}  "
           f"({res['n_chunks']} chunks) ---")
+    n = res["n_casos_con_gold"]
     print(f"  recall@k              {res['recall']:.3f}   "
-          f"({res['perfectos']}/{res['n_casos_con_gold']} casos perfectos)")
+          f"({res['perfectos']}/{n} casos perfectos)")
     print(f"    solo lo recuperado  {res['recall_sin_piso']:.3f}   "
           f"(sin el piso determinista)")
     print(f"    solo el piso        {res['recall_solo_piso']:.3f}   "
           f"(sin la búsqueda)")
     print(f"  MRR                   {res['mrr']:.3f}")
+
+    # Incertidumbre, y sobre todo: que mejora NO puede detectar esta muestra.
+    # Va debajo de los puntos y no en una nota al pie porque es la lectura que
+    # cambia la conclusion, no un anexo.
+    print()
+    print("  incertidumbre y poder de deteccion:")
+    for etiqueta, valor in (("recall@k", res["recall"]),
+                            ("solo lo recuperado", res["recall_sin_piso"])):
+        for linea in linea_mde(etiqueta, diagnostico(valor, n)):
+            print(linea)
     if res["span_mediano"] is not None:
         print(f"  span de la evidencia  {res['span_mediano']:.0f} días "
               f"(mediana sobre {res['n_spans']} casos con fecha; menos es mejor)")
