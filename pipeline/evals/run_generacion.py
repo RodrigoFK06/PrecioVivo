@@ -7,7 +7,7 @@ fuera la mitad del problema: un sistema puede recuperar el chunk perfecto y aun
 así responder una cifra inventada, y el usuario no tiene forma de saberlo. Las
 dos preguntas son independientes y hay que medirlas por separado.
 
-Aquí se miden tres cosas, todas contra la REGLA ABSOLUTA nº1 del prompt de
+Aquí se miden cuatro cosas, todas contra la REGLA ABSOLUTA nº1 del prompt de
 `ai.answer_with_context`: «Usa EXCLUSIVAMENTE los datos del contexto. Nunca
 inventes cifras.»
 
@@ -15,7 +15,10 @@ inventes cifras.»
      en el contexto recuperado, o derivarse de él con aritmética simple.
   2. ABSTENCIÓN. Cuando se pregunta por algo que no está en el catálogo, la
      respuesta no puede afirmar un precio. Ni el de un producto parecido.
-  3. COSTE por consulta, en tokens y en dólares.
+  3. CONTENIDO OBLIGADO Y PROHIBIDO. Para las preguntas adversariales hay
+     afirmaciones que la respuesta TIENE que hacer y otras que no puede hacer.
+     Ver `debe_afirmar` / `no_debe_afirmar` más abajo.
+  4. COSTE por consulta, en tokens y en dólares.
 
 POR QUÉ SIN JUEZ LLM, Y QUÉ SE PIERDE CON ESO
 ----------------------------------------------
@@ -32,6 +35,26 @@ Lo que se pierde, dicho claro: esto NO mide si la respuesta es útil, ni si
 razona bien, ni si atribuye causas que el dato no respalda. Mide una cosa
 concreta y la mide sin margen de duda. Un número honesto y estrecho vale más que
 uno amplio que nadie puede reproducir.
+
+LOS CASOS ADVERSARIALES, Y POR QUÉ SE COMPRUEBAN POR LO QUE AFIRMAN
+--------------------------------------------------------------------
+Una pregunta con premisa falsa —«¿por qué BAJÓ el brócoli en febrero de 2025?»
+cuando subió un 241,6 %— no se puede evaluar contando cifras: el modelo puede
+tragarse la premisa y explicar una bajada inexistente sin escribir un solo
+número inventado. El detector de invenciones no la ve.
+
+Se comprueba con dos predicados, ambos subcadenas y ambos deterministas:
+
+    debe_afirmar     al menos una de estas subcadenas está en la respuesta
+    no_debe_afirmar  ninguna de estas subcadenas está en la respuesta
+
+La comparación ignora tildes y mayúsculas.
+
+DECISIÓN DELIBERADA: la premisa falsa se comprueba exigiendo la CORRECCIÓN
+(`debe_afirmar: ["subio", "alza", ...]`), no prohibiendo la palabra «bajó». Una
+respuesta correcta dice «no bajó, subió un 241,6 %» — y contiene «bajó». Prohibir
+la palabra castigaría justo la respuesta buena. Se pide lo que la respuesta
+correcta tiene que decir, no lo que la mala diría.
 
 LAS TRES CATEGORÍAS, Y POR QUÉ SON TRES
 ----------------------------------------
@@ -57,6 +80,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 AQUI = Path(__file__).resolve().parent
@@ -175,6 +199,36 @@ def afirma_un_precio(respuesta: str) -> bool:
     return bool(_PRECIO.search(respuesta))
 
 
+def _plano(s: str) -> str:
+    """Sin tildes y en minúscula, para comparar subcadenas sin sorpresas.
+
+    El modelo escribe «subió» o «subio» según le dé, y la diferencia no dice
+    nada sobre si acertó.
+    """
+    sin_tilde = unicodedata.normalize("NFKD", s)
+    return "".join(c for c in sin_tilde if not unicodedata.combining(c)).lower()
+
+
+def afirmaciones(respuesta: str, caso: dict) -> dict:
+    """Comprueba `debe_afirmar` y `no_debe_afirmar` sobre la respuesta.
+
+    Devuelve solo las claves que el caso declara: un caso sin predicados
+    adversariales no aporta campos vacíos que luego haya que filtrar.
+    """
+    texto = _plano(respuesta)
+    fuera = {}
+    exigidas = caso.get("debe_afirmar")
+    if exigidas:
+        # cualquiera basta: son formas alternativas de decir lo mismo, no una
+        # lista de requisitos acumulativos.
+        fuera["afirmo"] = any(_plano(x) in texto for x in exigidas)
+        fuera["afirmo_cual"] = [x for x in exigidas if _plano(x) in texto]
+    prohibidas = caso.get("no_debe_afirmar")
+    if prohibidas:
+        fuera["dijo_prohibido"] = [x for x in prohibidas if _plano(x) in texto]
+    return fuera
+
+
 def correr(casos: list[dict], rec: Recuperador, catalogo: dict) -> list[dict]:
     filas = []
     for caso in casos:
@@ -195,6 +249,7 @@ def correr(casos: list[dict], rec: Recuperador, catalogo: dict) -> list[dict]:
         }
         if caso.get("debe_abstenerse"):
             fila["abstuvo"] = not afirma_un_precio(texto)
+        fila.update(afirmaciones(texto, caso))
         filas.append(fila)
     return filas
 
@@ -204,6 +259,7 @@ def resumir(filas: list[dict]) -> dict:
                        + len(f["cifras"]["sin_respaldo"]) for f in filas)
     inventadas = sum(len(f["cifras"]["sin_respaldo"]) for f in filas)
     con_abstencion = [f for f in filas if "abstuvo" in f]
+    con_afirmacion = [f for f in filas if "afirmo" in f]
     usos = [f["uso"] for f in filas if f.get("uso")]
     ent = sum(u["entrada"] or 0 for u in usos)
     sal = sum(u["salida"] or 0 for u in usos)
@@ -219,6 +275,11 @@ def resumir(filas: list[dict]) -> dict:
         "casos_con_invencion": [f["id"] for f in filas if f["cifras"]["sin_respaldo"]],
         "abstenciones_ok": sum(1 for f in con_abstencion if f["abstuvo"]),
         "abstenciones_esperadas": len(con_abstencion),
+        "afirmaciones_ok": sum(1 for f in con_afirmacion if f["afirmo"]),
+        "afirmaciones_esperadas": len(con_afirmacion),
+        "casos_sin_la_afirmacion": [f["id"] for f in con_afirmacion if not f["afirmo"]],
+        "casos_con_prohibido": {f["id"]: f["dijo_prohibido"]
+                                for f in filas if f.get("dijo_prohibido")},
         "casos_sin_modelo": sin_modelo,
         "tokens_entrada": ent,
         "tokens_salida": sal,
@@ -253,6 +314,7 @@ def main(argv=None) -> int:
     rec = Recuperador.desde_snapshot(snap)
     catalogo = catalogo_de(snap)
 
+    caso_por_id = {c["id"]: c for c in casos}
     filas = correr(casos, rec, catalogo)
     resumen = resumir(filas)
 
@@ -263,17 +325,32 @@ def main(argv=None) -> int:
         print(f"== Generación · {resumen['casos']} casos · embebedor real ==\n")
         for f in filas:
             c = f["cifras"]
-            marca = "!!" if c["sin_respaldo"] else ("ab" if f.get("abstuvo") is False else "  ")
+            if c["sin_respaldo"]:
+                marca = "!!"
+            elif f.get("abstuvo") is False:
+                marca = "ab"
+            elif f.get("afirmo") is False or f.get("dijo_prohibido"):
+                marca = "adv"
+            else:
+                marca = "   "
             print(f" {marca} {f['id']:32.32s} ctx={len(c['en_contexto']):2d} "
                   f"der={len(c['derivadas']):2d} SIN={len(c['sin_respaldo']):2d}"
                   + ("" if f["fuente"] == "llm-rag" else f"  [fuente={f['fuente']}]"))
             for x in c["sin_respaldo"]:
                 print(f"      cifra sin respaldo: {x}")
+            if f.get("afirmo") is False:
+                print("      no dijo ninguna de: "
+                      f"{caso_por_id[f['id']].get('debe_afirmar')}")
+            if f.get("dijo_prohibido"):
+                print(f"      dijo lo prohibido: {f['dijo_prohibido']}")
         print(f"\n cifras afirmadas   {resumen['cifras_afirmadas']}")
         print(f" sin respaldo       {resumen['cifras_sin_respaldo']}"
               f"  ({resumen['tasa_invencion']:.1%})")
         print(f" abstenciones       {resumen['abstenciones_ok']}/"
               f"{resumen['abstenciones_esperadas']}")
+        if resumen["afirmaciones_esperadas"]:
+            print(f" adversariales      {resumen['afirmaciones_ok']}/"
+                  f"{resumen['afirmaciones_esperadas']} dijeron lo que debían")
         print(f" tokens             {resumen['tokens_entrada']:,} entrada · "
               f"{resumen['tokens_salida']:,} salida")
         print(f" coste              USD {resumen['usd_total']:.5f} en total · "
