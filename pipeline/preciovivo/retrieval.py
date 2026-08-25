@@ -174,12 +174,33 @@ def detectar_productos(pregunta: str, catalogo: dict[str, str]) -> frozenset[str
       Napuri" y nadie lo escriba entero. Contar tokens en vez de exigir el nombre
       completo es lo que hace que la comparación entre ambos funcione.
 
-      AGRUPADO (1 token, y solo si ningún producto llegó a 2): "¿por qué subió la
-      papa?" no nombra una variedad, así que se traen las diez.
+      AGRUPADO (1 token): "¿por qué subió la papa?" no nombra una variedad, así
+      que se traen las diez.
 
-    El orden importa: si alguien dice "papa blanca", papa-blanca llega a 2 tokens
-    y las otras papas se quedan en 1, así que NO se expande. Solo se agrupa
-    cuando la pregunta de verdad fue genérica.
+    La supresión del nivel agrupado es POR FAMILIA, no global. Si alguien dice
+    "papa blanca", papa-blanca llega a 2 tokens y las otras papas se quedan en 1,
+    así que la familia "papa" NO se expande — pero cualquier OTRA familia que la
+    pregunta nombre sigue entrando.
+
+    POR QUÉ POR FAMILIA Y NO GLOBAL
+    --------------------------------
+    Era global: bastaba con que un producto llegara a 2 tokens para descartar
+    TODOS los de uno. Medido, con el catálogo real:
+
+        "compara el tomate con el brocoli"        -> tomate, brocoli      1+1 ok
+        "compara el ajo morado con la papa blanca"-> los dos              2+2 ok
+        "compara el tomate con la papa blanca"    -> SOLO papa-blanca     1+2 mal
+        "compara el ajo morado con el tomate"     -> SOLO ajo-morado      2+1 mal
+        "compara el limon sutil bolsa con tomate" -> SOLO los limones     3+1 mal
+
+    Es decir: cualquier comparación entre dos productos de nombres con distinto
+    número de palabras perdía el corto, en silencio. El piso llenaba entonces sus
+    ocho plazas con el producto superviviente y el modelo respondía la comparación
+    con la mitad de la evidencia — verificado hasta k=30.
+
+    No lo veía nadie porque los dos casos de comparación del gold set emparejan
+    nombres de igual longitud ("ajo morado"/"ajo criollo", "camote amarillo"/
+    "camote morado").
 
     Todo el matching es por token completo, nunca por subcadena: si no, "papa"
     matchearía dentro de "papaya" y la respuesta mezclaría dos productos.
@@ -198,20 +219,33 @@ def detectar_productos(pregunta: str, catalogo: dict[str, str]) -> frozenset[str
         cabezas.setdefault(tokens[0], []).append(slug)
 
     especificos = {s for s, n in aciertos.items() if n >= 2}
-    if especificos:
-        return frozenset(especificos)
 
-    # Nadie alcanzó dos tokens: la pregunta fue genérica. Se agrupa por la
-    # primera palabra del nombre, que es la que nombra la familia del producto.
+    # Familias que ya quedaron resueltas por un match específico. Dentro de
+    # ellas no se expande: quien dijo "papa blanca" no pidió las diez papas.
+    familias_resueltas = {cabeza for cabeza, slugs in cabezas.items()
+                          if any(s in especificos for s in slugs)}
+
+    # Agrupado por la primera palabra del nombre, que es la que nombra la
+    # familia — salvo en las familias ya resueltas.
     agrupados: set[str] = set()
     for cabeza, slugs in cabezas.items():
-        if cabeza in en_pregunta:
+        if cabeza in en_pregunta and cabeza not in familias_resueltas:
             agrupados.update(slugs)
-    if agrupados:
-        return frozenset(agrupados)
+
+    if especificos or agrupados:
+        return frozenset(especificos | agrupados)
 
     # Último recurso: un solo token coincidente que no es cabeza de familia
     # (p. ej. "napuri", "longapa", "hidroponica").
+    #
+    # SIGUE SIENDO ÚLTIMO RECURSO A PROPÓSITO, y no se une a los anteriores como
+    # sí se hace con el agrupado. `_tokens_significativos` solo descarta
+    # conectores y palabras de dos letras, así que aquí sobreviven tokens de
+    # unidad —"bolsa", "cajon", "docena", "atado"— que aparecen en nombres de
+    # producto Y en preguntas corrientes. Unirlo convertiría "¿la papa blanca
+    # viene en bolsa?" en una consulta sobre el limón. El nivel específico y el
+    # agrupado se anclan en el nombre del producto; éste no, y por eso solo
+    # actúa cuando no hay nada mejor.
     return frozenset(s for s, n in aciertos.items() if n == 1)
 
 

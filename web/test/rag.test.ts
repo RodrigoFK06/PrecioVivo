@@ -96,6 +96,35 @@ describe("detectarProductos — espeja test_retrieval.py", () => {
     expect(detectarProductos("PRECIO DEL TOMATE", CATALOGO)).toEqual(new Set(["tomate"]));
   });
 
+  it("un nombre corto no lo borra uno largo", () => {
+    // La regresión medida: bastaba con que UN producto llegara a dos tokens para
+    // descartar todos los de uno. "papa blanca" son dos y "tomate" uno, así que
+    // el tomate desaparecía y la comparación se respondía con media evidencia.
+    expect(detectarProductos("compara el tomate con la papa blanca", CATALOGO)).toEqual(
+      new Set(["tomate", "papa-blanca"]),
+    );
+  });
+
+  it("el orden de la pregunta no cambia el resultado", () => {
+    const izq = detectarProductos("compara el tomate con la papa blanca", CATALOGO);
+    const der = detectarProductos("compara la papa blanca con el tomate", CATALOGO);
+    expect(izq).toEqual(der);
+    expect(izq).toEqual(new Set(["tomate", "papa-blanca"]));
+  });
+
+  it("la supresión de familia sigue en pie", () => {
+    // Lo que el cortocircuito protegía y no se puede perder al arreglarlo.
+    const r = detectarProductos("compara el tomate con la papa blanca", CATALOGO);
+    expect(r.has("papa-amarilla")).toBe(false);
+  });
+
+  it("una palabra de unidad no arrastra un producto", () => {
+    const cat = { ...CATALOGO, "limon-sutil-bolsa": "Limon Sutil Bolsa" };
+    expect(detectarProductos("¿la papa blanca viene en bolsa?", cat)).toEqual(
+      new Set(["papa-blanca"]),
+    );
+  });
+
   it("sin producto", () => {
     expect(detectarProductos("¿qué está más barato hoy?", CATALOGO).size).toBe(0);
   });

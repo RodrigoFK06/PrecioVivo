@@ -102,6 +102,44 @@ def test_token_raro_identifica_el_producto():
 def test_pregunta_sin_tokens(catalogo):
     assert R.detectar_productos("¿?", catalogo) == frozenset()
 
+def test_un_nombre_corto_no_lo_borra_uno_largo(catalogo):
+    """La regresión medida: bastaba con que UN producto llegara a dos tokens
+    para descartar todos los de uno, en silencio.
+
+    "papa blanca" son dos tokens y "tomate" uno, así que el tomate desaparecía y
+    el piso llenaba sus ocho plazas con papa. La comparación se respondía con la
+    mitad de la evidencia — verificado hasta k=30 sobre el catálogo real.
+    """
+    r = R.detectar_productos("compara el tomate con la papa blanca", catalogo)
+    assert r == frozenset({"tomate", "papa-blanca"})
+
+
+def test_el_orden_de_la_pregunta_no_cambia_el_resultado(catalogo):
+    izq = R.detectar_productos("compara el tomate con la papa blanca", catalogo)
+    der = R.detectar_productos("compara la papa blanca con el tomate", catalogo)
+    assert izq == der == frozenset({"tomate", "papa-blanca"})
+
+
+def test_la_supresion_de_familia_sigue_en_pie(catalogo):
+    """Lo que el cortocircuito protegía y NO se puede perder al arreglarlo:
+    nombrar una variedad no arrastra a sus hermanas.
+
+    La supresión pasa de global a por familia — "papa" queda resuelta y no se
+    expande, pero eso ya no puede borrar productos de OTRA familia.
+    """
+    r = R.detectar_productos("compara el tomate con la papa blanca", catalogo)
+    assert "papa-amarilla" not in r
+
+
+def test_una_palabra_de_unidad_no_arrastra_un_producto(catalogo):
+    """`_tokens_significativos` no descarta "bolsa", "cajon" ni "docena", que
+    viven en nombres de producto Y en preguntas corrientes. Por eso el último
+    recurso sigue siendo último y no se une a los demás niveles."""
+    catalogo_unidad = dict(catalogo, **{"limon-sutil-bolsa": "Limon Sutil Bolsa"})
+    r = R.detectar_productos("¿la papa blanca viene en bolsa?", catalogo_unidad)
+    assert r == frozenset({"papa-blanca"})
+
+
 
 # --------------------------------------------------------------------------- #
 # Detección de fechas — siempre relativa al último dato, no al reloj

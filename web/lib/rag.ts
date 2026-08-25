@@ -467,7 +467,18 @@ function tokensSignificativos(nombre: string): string[] {
   return tokenizar(nombre).filter((t) => t.length > 2 && !PALABRAS_VACIAS.has(t));
 }
 
-/** Ver retrieval.detectar_productos: específico (>=2 tokens) o agrupado (1). */
+/**
+ * Ver retrieval.detectar_productos: específico (>=2 tokens) o agrupado (1).
+ *
+ * La supresión del nivel agrupado es POR FAMILIA, no global. Era global, y eso
+ * hacía que bastara con que UN producto llegara a dos tokens para descartar
+ * todos los de uno: "compara el tomate con la papa blanca" perdía el tomate y
+ * el piso llenaba sus ocho plazas con papa. Cualquier comparación entre nombres
+ * de distinta longitud respondía con la mitad de la evidencia.
+ *
+ * Esta copia es la que sirve a los usuarios: arreglarlo solo en Python no habría
+ * llegado a producción. El comentario de arriba avisa de justo esto.
+ */
 export function detectarProductos(pregunta: string, catalogo: Record<string, string>): Set<string> {
   const enPregunta = new Set(tokenizar(pregunta));
   if (!enPregunta.size) return new Set();
@@ -484,14 +495,28 @@ export function detectarProductos(pregunta: string, catalogo: Record<string, str
   }
 
   const especificos = new Set([...aciertos].filter(([, n]) => n >= 2).map(([s]) => s));
-  if (especificos.size) return especificos;
+
+  // Familias ya resueltas por un match específico: dentro de ellas no se
+  // expande — quien dijo "papa blanca" no pidió las diez papas.
+  const familiasResueltas = new Set(
+    [...cabezas].filter(([, slugs]) => slugs.some((s) => especificos.has(s))).map(([c]) => c),
+  );
 
   const agrupados = new Set<string>();
   for (const [cabeza, slugs] of cabezas) {
-    if (enPregunta.has(cabeza)) slugs.forEach((s) => agrupados.add(s));
+    if (enPregunta.has(cabeza) && !familiasResueltas.has(cabeza)) {
+      slugs.forEach((s) => agrupados.add(s));
+    }
   }
-  if (agrupados.size) return agrupados;
 
+  if (especificos.size || agrupados.size) {
+    return new Set([...especificos, ...agrupados]);
+  }
+
+  // Último recurso, y sigue siendo último a propósito: aquí sobreviven tokens de
+  // unidad ("bolsa", "cajon", "docena") que viven en nombres de producto Y en
+  // preguntas corrientes. Unirlo a los niveles anteriores convertiría "¿la papa
+  // blanca viene en bolsa?" en una consulta sobre el limón.
   return new Set([...aciertos].filter(([, n]) => n === 1).map(([s]) => s));
 }
 

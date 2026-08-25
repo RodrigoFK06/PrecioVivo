@@ -553,7 +553,7 @@
      "slug": "papa-blanca"
     }
    ],
-   "nota": "CASO QUE HOY FALLA, a proposito. detectar_productos (retrieval.py:200) se queda con los productos que alcanzan >=2 tokens y, si alguno lo alcanza, DESCARTA los de un token: 'papa blanca' son 2 y 'tomate' es 1, asi que el tomate desaparece y el piso llena las 8 plazas con papa. Medido: solo papa-blanca hasta k=30. La heuristica es correcta para una pregunta de un producto -- evita que 'papa blanca' arrastre las diez papas -- y se rompe cuando la pregunta nombra dos. Los dos casos de comparacion que ya existian no lo veian porque emparejan nombres de igual longitud ('ajo morado'/'ajo criollo', 'camote amarillo'/'camote morado'). Comprobado: 1+1 detecta los dos, 2+2 detecta los dos, 2+1 y 1+2 y 3+1 pierden el corto."
+   "nota": "Comparacion entre nombres de distinta longitud, que es la mayoria: los dos casos de comparacion mas antiguos emparejan nombres de IGUAL longitud ('ajo morado'/'ajo criollo', 'camote amarillo'/'camote morado') y por eso no veian el fallo. detectar_productos descartaba los productos de UN token en cuanto algun otro alcanzaba dos, asi que aqui se perdia el tomate y el piso llenaba sus ocho plazas con papa -- medido: solo papa-blanca hasta k=30. Corregido el 2026-08-25 haciendo que la supresion sea POR FAMILIA y no global. Este caso existe para que no vuelva."
   }
  ]
 }
