@@ -44,8 +44,20 @@ import time
 logging.getLogger("pyspark.sql.connect.logging").setLevel(logging.CRITICAL)
 
 TOPE_SEGUNDOS = 180        # por consulta; al superarlo se abandona esa escala
-ESCALAS = ("tpcds_sf1", "tpcds_sf1000")
 RESULTADOS = []
+INVENTARIO = []
+
+# Parametro: que escalas correr. Por defecto SOLO SF1, que es barata.
+#
+# SF1000 se pide explicitamente. Free Edition apaga el workspace el resto del dia
+# si te pasas de cuota, asi que el default no puede ser el caro: un notebook que
+# quema el dia por descuido no es un experimento, es un accidente.
+try:
+    dbutils.widgets.text("escalas", "tpcds_sf1")
+    ESCALAS = tuple(x.strip() for x in dbutils.widgets.get("escalas").split(",") if x.strip())
+except Exception:                                # noqa: BLE001
+    ESCALAS = ("tpcds_sf1",)
+print("escalas a medir:", ESCALAS)
 
 # COMMAND ----------
 
@@ -76,9 +88,13 @@ for esquema in ESCALAS:
             b = d.get("sizeInBytes") or 0
             nf = d.get("numFiles") or 0
             total_bytes += b
+            INVENTARIO.append({"escala": esquema, "tabla": t, "filas": n,
+                               "bytes": b, "archivos": nf})
             print(f"  {t:14s} {n:>14,} filas · {b / 1e9:8.3f} GB · "
                   f"{nf:>5} archivos · {b / max(nf, 1) / 1e6:6.1f} MB/archivo")
         except Exception as e:                       # noqa: BLE001
+            INVENTARIO.append({"escala": esquema, "tabla": t,
+                               "error": type(e).__name__})
             print(f"  {t:14s} no accesible ({type(e).__name__})")
     print(f"  {'TOTAL':14s} {total_bytes / 1e9:>8.3f} GB")
 
@@ -251,3 +267,33 @@ for nombre, d in por_consulta.items():
             cal = "-" if r["caliente"] is None else f"{r['caliente']:.1f}"
             print(f"  {nombre:32s} {esq:14s} frio {r['frio']:7.1f}s  "
                   f"caliente {cal:>7}s  {estado}")
+
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 6. Devolver los resultados como JSON
+# MAGIC
+# MAGIC En serverless, la salida estándar de un notebook lanzado como job **no se
+# MAGIC expone por la API**: `get-run-output` devuelve el `result` de
+# MAGIC `dbutils.notebook.exit` y nada más.
+# MAGIC
+# MAGIC Así que los prints son para cuando lo corre una persona, y esto es para
+# MAGIC cuando lo corre la CLI. Los dos caminos leen las mismas estructuras, que es
+# MAGIC lo que evita que digan cosas distintas.
+
+# COMMAND ----------
+
+import json
+
+_salida = json.dumps({"escalas": list(ESCALAS),
+                      "inventario": INVENTARIO,
+                      "consultas": RESULTADOS}, ensure_ascii=False)
+print(f"(devolviendo {len(_salida):,} bytes de JSON)")
+try:
+    dbutils.notebook.exit(_salida)
+except Exception as _e:                          # noqa: BLE001
+    # Corriendo a mano en el notebook no hay job que reciba el valor, y eso no
+    # es un fallo. Se dice cual fue en vez de tragarselo: si algun dia falla por
+    # otra razon, quiero verla.
+    print(f"(sin job que reciba la salida: {type(_e).__name__})")

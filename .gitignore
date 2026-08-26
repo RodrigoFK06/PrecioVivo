@@ -49,3 +49,4 @@ graphify-out/
 # Databricks y el que hay que poder auditar.
 lakehouse/gmml_real.csv
 lakehouse/*.parquet
+lakehouse/.tmp/
