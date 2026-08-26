@@ -117,13 +117,33 @@ El entorno se midió el 2026-08-26 (notebook 00). Free Edition serverless:
 
 ```
 Spark 4.1.0 · Python 3.12.3 · Delta 3.4.0 · MLflow 3.8.1
-catálogos: samples · system · workspace
+catálogos: samples · system · workspace · preciovivo (creado)
 shuffle.partitions = auto      AQE decide, no tú
-samples.tpch.lineitem   29.999.795 filas · 16 col
-samples.tpch.orders      7.500.000 filas
-samples.nyctaxi.trips       21.932 filas     (diminuto)
-samples.tpcds_sf1       NO EXISTE en este workspace
 ```
+
+### `SHOW SCHEMAS` sobre un Delta Share devuelve un subconjunto
+
+`samples` está bajo **"Shares received"**: es un Delta Share, no un catálogo
+normal. `SHOW SCHEMAS IN samples` devolvió **6 de los 11 esquemas** que la UI
+lista, y escribí *"tpcds_sf1 no existe en este workspace"* fiándome de eso.
+
+Era falso. `SHOW TABLES IN <esquema>` sí funciona:
+
+| esquema | lo que hay |
+|---|---|
+| `tpcds_sf1` | 24 tablas |
+| **`tpcds_sf1000`** | **24 tablas · TPC-DS a factor 1000, del orden de 1 TB** |
+| `healthverity` | 1 tabla |
+| `sec` | 0 tablas |
+| `tpch.lineitem` | 29.999.795 filas · 16 col |
+
+**Esto reordena el plan entero, y para mejor.** Hay un terabyte de benchmark
+estándar ya montado, con **el mismo esquema a dos escalas**: SF1 y SF1000. Mismas
+24 tablas, mismas consultas, mil veces más datos. Es un experimento controlado
+servido en bandeja, y nadie puede acusarlo de estar hecho a medida.
+
+El generador sintético no se tira: sigue siendo el banco fino, con la forma del
+dominio propio y el tamaño bajo control. Deja de ser el banco pesado.
 
 **El cuello de botella no es lo que yo suponía.** Generar filas es efectivamente
 gratis; escribirlas es lo que cuesta:
@@ -150,7 +170,11 @@ mejor caso posible y no informa de nada.
 Lo mismo con `lineitem.count()` en 1,3 s para 30 M filas: **Delta guarda el
 conteo en su log de transacciones**, así que ese count lee metadatos, no datos.
 
-### 10 GB no es alcanzable, y ése es el resultado
+### Sobre generar 10 GB: ya no hace falta
+
+La estimación de abajo se hizo antes de descubrir `tpcds_sf1000`. Se deja porque
+sigue siendo cierta para la pista sintética, y porque explica por qué GENERAR un
+terabyte nunca fue viable aquí.
 
 A 77 K filas/s y 7,5 MB por millón de filas:
 
