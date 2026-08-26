@@ -1,0 +1,8 @@
+# Los notebooks de Databricks se ejecutan DENTRO del workspace, donde `spark`,
+# `dbutils` y `display` los inyecta el runtime. Ruff no puede saberlo y marca
+# F821 (nombre no definido) en cada uso.
+#
+# Se declaran como builtins en vez de sembrar el archivo de `# noqa`: el ruido
+# de veinte supresiones esconderia un F821 de verdad, que es justo lo que la
+# regla existe para cazar.
+builtins = ["spark", "dbutils", "display", "displayHTML", "sc"]
