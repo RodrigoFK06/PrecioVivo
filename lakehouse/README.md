@@ -192,15 +192,115 @@ Matiz honesto: esos 12,9 s incluyen el arranque en frío del camino de escritura
 Con volúmenes mayores el coste fijo se reparte y el ritmo debería mejorar. Hay que
 medirlo, no suponerlo.
 
-En cada escalón se mide lo mismo en los dos lados:
+---
+
+## Resultados de la pista A · medallón con dato real
+
+Corrido el 2026-08-25 en `preciovivo.{bronze,silver,gold}`, 38.481 filas.
+
+### Spark contra la misma máquina de siempre
+
+| capa | local (SQLite) | Databricks (Spark) | razón |
+|---|---|---|---|
+| bronze | 0,077 s | 5,4 s | 70× |
+| silver | 0,040 s | 6,4 s | 159× |
+| gold | 0,058 s | 6,6 s | 114× |
+| **total** | **0,175 s** | **18,4 s** | **105×** |
+
+**Spark es 105 veces más lento**, y no porque esté mal usado. A esta escala el
+coste fijo —planificar la consulta, hablar por red con el motor, coordinar
+tareas— domina por completo al trabajo real. Ese coste se amortiza cuando hay
+órdenes de magnitud más datos, y aquí no los hay.
+
+Ése es el número que hace defendible la frase *"es desproporcionado"*. No es una
+opinión sobre la herramienta: es la medición de cuándo empieza a compensar.
+
+### Las dos implementaciones coinciden
+
+| | SQLite | Spark |
+|---|---|---|
+| aceptadas | 38.394 | 38.394 |
+| cuarentena | 87 | 87 |
+| claves duplicadas | — | **0** |
+
+Dos motores distintos, mismas reglas de silver, mismos conteos exactos. Eso no es
+casualidad: valida que la lógica de validación es la misma en los dos sitios.
+
+Las 87 en cuarentena son todas **precio ausente** (0,23 %). No se descartaron en
+silencio: están en `silver.cuarentena` con su motivo.
+
+### 3 bytes por fila, y por qué
+
+| tabla | filas | archivos | tamaño | bytes/fila |
+|---|---|---|---|---|
+| `bronze.gmml` | 38.481 | 1 | 107 KB | **3** |
+| `silver.precios` | 38.394 | 1 | 106 KB | **3** |
+| `gold.resumen_mensual` | 29 | 1 | 3 KB | 109 |
+| `gold.volatilidad_producto` | 73 | 1 | 6 KB | 78 |
+
+El CSV de origen pesa **2,1 MB**; en Delta son **107 KB**. Veinte veces menos, con
+diez columnas por fila. La razón está en la cardinalidad:
+
+| columna | valores distintos | repeticiones | qué hace Parquet |
+|---|---|---|---|
+| `producto` | 147 | 262 | diccionario, ~1 byte/fila |
+| `mercado` | 3 | 12.827 | diccionario |
+| `unidad` | 21 | 1.832 | diccionario |
+| `tendencia` | 5 | 7.696 | diccionario |
+| `fecha` | 543 | 71 | diccionario de 2 bytes |
+| `precio_kg` | 1.498 | 26 | diccionario de 2 bytes |
+| `_origen` | **1** | 38.481 | RLE lo colapsa a casi nada |
+
+Parquet es **columnar**: guarda cada columna junta en vez de fila a fila. Así los
+valores vecinos se parecen, y un diccionario más run-length encoding se los come.
+En CSV, `"Papa Blanca"` se escribe 262 veces enteras; en Parquet, una vez, y luego
+262 referencias de un byte.
+
+Ese contraste es la respuesta a *"¿por qué no basta con un CSV?"*, medida sobre
+dato propio.
+
+### Un archivo por tabla, que también es información
+
+A esta escala Spark escribe **un solo archivo** por tabla. No hay problema de
+*small files* porque no hay datos suficientes para repartir. Es el mismo mensaje
+otra vez: los problemas que Delta resuelve todavía no existen aquí.
+
+### El linaje sale vacío
+
+`system.access.table_lineage` devolvió **0 filas**. Puede tardar en poblarse o
+estar restringido en Free Edition. No bloquea nada, y hay que reintentarlo más
+tarde antes de afirmar que no funciona.
+
+### Y un hallazgo de negocio, que aquí sí vale
+
+Los diez productos más volátiles del GMML por coeficiente de variación
+(desviación entre media, adimensional, así que comparable entre un producto de
+S/ 1 y otro de S/ 20):
+
+| producto | días | promedio | coef. variación |
+|---|---|---|---|
+| Arveja Verde Blanca Serrana | 529 | 4,21 | **0,62** |
+| Holantau/Organica | 529 | 9,31 | 0,55 |
+| Aji Escabeche | 529 | 3,68 | 0,54 |
+| Ajo Criollo O Napuri | 529 | 7,68 | 0,54 |
+| Arveja Verde Americana | 529 | 5,49 | 0,54 |
+
+Ninguno es de los de mayor volumen. La papa y la cebolla, que mueven las
+toneladas, no aparecen. **Esto es dato real, así que la conclusión se puede
+afirmar** — al revés que todo lo que salga de la pista sintética.
+
+---
+
+## Lo que falta medir en la pista B
 
 | | local (SQLite + Python) | Databricks (Spark) |
 |---|---|---|
-| tiempo de la agregación | | |
-| memoria máxima | | |
-| tamaño en disco | | |
+| tiempo de la agregación | 0,175 s a 38 K filas | 18,4 s a 38 K filas |
+| a escala TPC-DS SF1 | por medir | por medir |
+| a escala TPC-DS SF1000 | **imposible en una máquina** | por medir |
 
-Sin la columna de la izquierda, "Spark tardó 30 segundos" no significa nada.
+La fila de abajo es el punto entero: existe un volumen donde la columna izquierda
+deja de poder responder. Encontrarlo es el experimento.
 
 ---
 
