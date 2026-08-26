@@ -364,6 +364,58 @@ conclusión que uno quería.
 
 ---
 
+## Resultados de `OPTIMIZE` · y el experimento que no pudo medir lo que quería
+
+`samples` es un Delta Share de solo lectura, así que la tabla se copió a
+`preciovivo.bench.ss_sf1` **fragmentada a propósito** con `repartition(1824)`,
+para partir del mismo estado que se midió en el original. Condición fabricada, no
+encontrada, y por eso se dice.
+
+| estado | archivos | MB/archivo | P escaneo | F filtrada |
+|---|---|---|---|---|
+| 1 · fragmentada | 1.824 | 0,079 | 1,73 s | 1,81 s |
+| 2 · `OPTIMIZE` | **3** | 36,2 | 1,44 s | 1,41 s |
+| 3 · `+ ZORDER` | **1** | 107,4 | **1,01 s** | **1,01 s** |
+
+Compactar de 1.824 archivos a 3 y luego a 1 da **×1,71 en el escaneo y ×1,79 en
+la consulta filtrada**. La compactación funciona y el número es real.
+
+### Pero el Z-ORDER no se pudo evaluar, y hay que decirlo
+
+El diseño decía: *"si F mejora más que P del estado 2 al 3, el Z-ORDER está
+podando"*. Los números:
+
+```
+P mejora x1,71     F mejora x1,79     practicamente lo mismo
+```
+
+Y la razón es aritmética: **el estado 3 tiene UN SOLO archivo.** Con un archivo no
+hay poda posible, porque no se puede descartar el único que hay. Todo lo que
+mejoró del 2 al 3 es más compactación, no agrupamiento.
+
+Es decir: **el experimento midió compactación tres veces**, no compactación contra
+clustering. La tabla de 120 MB es demasiado pequeña para el efecto que se quería
+aislar; cabe entera en un archivo.
+
+Para medir Z-ORDER de verdad haría falta una tabla que **siga teniendo muchos
+archivos después de `OPTIMIZE`**, del orden de decenas de GB. SF1000 lo sería,
+pero copiar 103 GB no cabe en la cuota.
+
+Se deja escrito así en vez de presentar el ×1,79 como prueba de poda. El número es
+correcto; la interpretación que invitaba a hacer, no.
+
+### Y una segunda lectura, sobre el suelo
+
+En el estado 3 las dos consultas tardan **exactamente lo mismo**: 1,01 s. Cuando
+dos consultas de coste distinto convergen al mismo tiempo, lo que se está midiendo
+ya no es el trabajo sino el **suelo fijo** de planificar y hablar con el motor.
+
+Eso encaja con lo del medallón: a esta escala el coste fijo domina. La penalización
+por *small files* aquí es de unos 0,7 s sobre 1,7 s. Real, medible, y modesta
+porque la tabla entera es diminuta.
+
+---
+
 ## Lo que falta medir en la pista B
 
 | | local (SQLite + Python) | Databricks (Spark) |
