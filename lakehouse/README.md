@@ -291,6 +291,79 @@ afirmar** — al revés que todo lo que salga de la pista sintética.
 
 ---
 
+## Resultados de la pista B · SF1 contra SF1000
+
+Corrido el 2026-08-25 desde la CLI, sin tocar la interfaz. Free Edition
+serverless, tope de 180 s por consulta. **Nada abortó**: la peor tardó 39,4 s.
+
+### Lo que hay a cada escala
+
+| tabla | SF1 | SF1000 | crecimiento |
+|---|---|---|---|
+| `store_sales` | 2.879.789 filas · 0,12 GB | **2.879.966.589 filas · 103,6 GB** | ×1000 filas, ×867 bytes |
+| `customer` | 100.000 | 12.000.000 | ×120 |
+| `item` | 18.000 | 300.000 | ×17 |
+| `date_dim` | 73.049 | 73.049 | **×1** |
+
+**SF1000 no multiplica todo por mil.** Multiplica el hecho por mil y las
+dimensiones mucho menos; el calendario no crece en absoluto. Es como está
+diseñado TPC-DS, y es realista: en un almacén de verdad los hechos crecen y las
+dimensiones no.
+
+### La razón de escala, que es el resultado
+
+| consulta | SF1 | SF1000 | razón | lectura |
+|---|---|---|---|---|
+| A · agregación sobre el hecho | 1,54 s | 15,0 s | **×10** | Spark absorbe con paralelismo |
+| B · join hecho–dimensión | 1,70 s | 39,4 s | **×23** | el peor caso |
+| C · star join con filtro | 1,85 s | **11,1 s** | **×6** | el mejor caso |
+
+**Mil veces más datos cuestan entre seis y veintitrés veces más tiempo.** Eso es
+lo que compra el paralelismo, y es la respuesta con número a *"¿por qué Spark?"*.
+
+### La consulta con más joins es la más rápida, y no es casualidad
+
+C hace dos joins y aun así bate a A, que no hace ninguno. El motivo es el filtro:
+
+```
+d_year = 2001  selecciona ~365 de 73.049 fechas = 0,50 % del calendario
+```
+
+Si C leyera la tabla entera tardaría al menos lo que A (15,0 s). Tarda 11,1 s, así
+que **está descartando archivos sin abrirlos**. Eso es *partition pruning*, y es
+la razón por la que un lakehouse bien particionado gana a un escaneo completo
+aunque haga más trabajo aparente.
+
+Caudal efectivo si cada consulta leyera los 103,6 GB completos:
+
+| consulta | caudal aparente |
+|---|---|
+| A | 6,90 GB/s · 192 M filas/s |
+| B | 2,63 GB/s · 73 M filas/s |
+| **C** | **9,33 GB/s · 259 M filas/s** |
+
+El de C es "imposible" para una lectura real: la cifra alta es justamente la
+prueba de que no lee todo.
+
+### El dataset pequeño está peor particionado que el grande
+
+| | archivos | MB por archivo |
+|---|---|---|
+| SF1 · `store_sales` | 1.824 | **0,1** |
+| SF1000 · `store_sales` | 1.837 | **56,4** |
+
+Casi los mismos archivos para mil veces más datos. En SF1 son 66 KB por archivo,
+contra los ~128 MB que Databricks recomienda: **1.824 aperturas de archivo para
+leer 120 MB.** Es el problema de *small files* de manual, en el propio dataset de
+ejemplo de Databricks.
+
+**Y sesga este experimento.** SF1 va más lento de lo que le tocaría, así que las
+razones de 6× a 23× salen mejores de lo que serían con las dos escalas bien
+empaquetadas. Se dice porque sin decirlo el número queda inflado a favor de la
+conclusión que uno quería.
+
+---
+
 ## Lo que falta medir en la pista B
 
 | | local (SQLite + Python) | Databricks (Spark) |
