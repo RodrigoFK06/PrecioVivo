@@ -111,19 +111,62 @@ existe para marcar algo que tiene que marcar, y aquí marcó.
 
 ---
 
-## Plan de la prueba de carga
+## Plan de la prueba de carga, corregido con lo medido
 
-**No hay objetivo de 10 GB.** El objetivo es la curva, y se sube escalón a escalón
-midiendo en cada uno:
+El entorno se midió el 2026-08-26 (notebook 00). Free Edition serverless:
 
 ```
-10 MB → 100 MB → 1 GB → 10 GB
+Spark 4.1.0 · Python 3.12.3 · Delta 3.4.0 · MLflow 3.8.1
+catálogos: samples · system · workspace
+shuffle.partitions = auto      AQE decide, no tú
+samples.tpch.lineitem   29.999.795 filas · 16 col
+samples.tpch.orders      7.500.000 filas
+samples.nyctaxi.trips       21.932 filas     (diminuto)
+samples.tpcds_sf1       NO EXISTE en este workspace
 ```
 
-Se para donde muerda la cuota. Free Edition **no publica límites numéricos**: usa
-una política de uso justo, y al pasarte **apaga el workspace el resto del día**, y
-en casos extremos el resto del mes. Así que "se rompió en 1 GB" es un resultado
-igual de publicable que "llegó a 10 GB".
+**El cuello de botella no es lo que yo suponía.** Generar filas es efectivamente
+gratis; escribirlas es lo que cuesta:
+
+| operación | medido |
+|---|---|
+| generar + filtrar + contar 1.000 M filas | 0,8 s |
+| **escribir 1 M filas en Delta** | **12,9 s → 77 K filas/s** |
+
+Quince mil veces de diferencia.
+
+### La sonda de generación estaba mal diseñada, y su propio resultado lo delata
+
+```
+      1.000.000 filas   0,8 s
+  1.000.000.000 filas   0,8 s      <- mil veces más datos, el mismo tiempo
+```
+
+Tiempo constante sobre tres órdenes de magnitud significa que se estaba midiendo
+la latencia del viaje de ida y vuelta contra el motor, no el trabajo. `range` +
+`rand` + `filter` + `count` no lee disco, no escribe y no hace shuffle: es el
+mejor caso posible y no informa de nada.
+
+Lo mismo con `lineitem.count()` en 1,3 s para 30 M filas: **Delta guarda el
+conteo en su log de transacciones**, así que ese count lee metadatos, no datos.
+
+### 10 GB no es alcanzable, y ése es el resultado
+
+A 77 K filas/s y 7,5 MB por millón de filas:
+
+| objetivo | filas | escritura |
+|---|---|---|
+| 100 MB | ~13 M | ~3 min |
+| 750 MB | ~100 M | ~22 min |
+| **10 GB** | **~1.330 M** | **~4,8 horas** |
+
+Casi cinco horas de escritura continua no caben en la cuota diaria. **El techo
+realista está en torno a 750 MB**, y decirlo con el número al lado vale más que
+haber procesado 10 GB.
+
+Matiz honesto: esos 12,9 s incluyen el arranque en frío del camino de escritura.
+Con volúmenes mayores el coste fijo se reparte y el ritmo debería mejorar. Hay que
+medirlo, no suponerlo.
 
 En cada escalón se mide lo mismo en los dos lados:
 
