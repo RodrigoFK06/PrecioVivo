@@ -182,6 +182,7 @@ def correr(casos: list[dict], rec: Recuperador, catalogo: dict) -> list[dict]:
             "categoria": caso["categoria"],
             "fuente": salida.get("fuente"),
             "cifras": clasificar_cifras(texto, contexto),
+            "verificacion": salida.get("verificacion") or {},
             "uso": salida.get("uso"),
             "texto": texto,
         }
@@ -205,12 +206,37 @@ def resumir(filas: list[dict]) -> dict:
     # Una respuesta del fallback determinista no dice nada sobre el modelo: si
     # aparece, el arnés midió otra cosa y hay que decirlo en vez de promediarlo.
     sin_modelo = [f["id"] for f in filas if f["fuente"] != "llm-rag"]
+
+    # LA INVENCION SE MIDE ANTES DEL ARREGLO, NO DESPUES.
+    #
+    # Desde que `ai.answer_with_context` verifica en linea, `tasa_invencion`
+    # sobre el texto ENTREGADO es 0,000 POR CONSTRUCCION: el verificador
+    # reintenta y, si el modelo reincide, degrada al fallback determinista. La
+    # metrica dejo de poder fallar -- exactamente el defecto que este
+    # repositorio persigue en todas partes: un indicador que siempre sale
+    # perfecto es indistinguible de uno roto.
+    #
+    # Se conserva porque sigue siendo la promesa al usuario (si algun dia no da
+    # 0, el verificador tiene un agujero), pero la cifra que mide AL MODELO es
+    # `tasa_intervencion`: cuantas veces el PRIMER intento traia una cifra sin
+    # respaldo.
+    intervenidos = [f for f in filas
+                    if (f.get("verificacion") or {}).get("sin_respaldo_inicial")]
+    estados = {}
+    for f in filas:
+        e = (f.get("verificacion") or {}).get("estado")
+        if e:
+            estados[e] = estados.get(e, 0) + 1
+
     return {
         "casos": len(filas),
         "cifras_afirmadas": total_cifras,
         "cifras_sin_respaldo": inventadas,
         "tasa_invencion": (inventadas / total_cifras) if total_cifras else 0.0,
         "casos_con_invencion": [f["id"] for f in filas if f["cifras"]["sin_respaldo"]],
+        "casos_intervenidos": [f["id"] for f in intervenidos],
+        "tasa_intervencion": (len(intervenidos) / len(filas)) if filas else 0.0,
+        "verificacion_estados": estados,
         "abstenciones_ok": sum(1 for f in con_abstencion if f["abstuvo"]),
         "abstenciones_esperadas": len(con_abstencion),
         "afirmaciones_ok": sum(1 for f in con_afirmacion if f["afirmo"]),
@@ -299,6 +325,12 @@ def main(argv=None) -> int:
     resumen = resumir(filas)
 
     if args.json:
+        # stdout se codifica en cp1252 en Windows y `ensure_ascii=False`
+        # perdia los acentos al redirigir: "pronostico" con tilde acababa como
+        # U+FFFD y las comprobaciones por subcadena del gold set no encontraban
+        # nada. El JSON seguia siendo valido, con el contenido roto.
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8")
         print(json.dumps({"resumen": resumen, "filas": filas},
                          ensure_ascii=False, indent=1))
     else:
@@ -324,6 +356,11 @@ def main(argv=None) -> int:
             if f.get("dijo_prohibido"):
                 print(f"      dijo lo prohibido: {f['dijo_prohibido']}")
         print(f"\n cifras afirmadas   {resumen['cifras_afirmadas']}")
+        print(f" intervino el verificador  {len(resumen['casos_intervenidos'])}"
+              f"/{resumen['casos']} casos "
+              f"({resumen['tasa_intervencion']:.1%})   <- mide AL MODELO")
+        if resumen["verificacion_estados"]:
+            print(f"   estados           {resumen['verificacion_estados']}")
         print(f" sin respaldo       {resumen['cifras_sin_respaldo']}"
               f"  ({resumen['tasa_invencion']:.1%})")
         print(f" abstenciones       {resumen['abstenciones_ok']}/"

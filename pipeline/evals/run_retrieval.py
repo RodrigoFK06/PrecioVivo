@@ -303,6 +303,12 @@ def main() -> int:
                   for g in granularidades]
 
     if args.json:
+        # stdout se codifica en cp1252 en Windows y `ensure_ascii=False`
+        # perdia los acentos al redirigir: "pronostico" con tilde acababa como
+        # U+FFFD y las comprobaciones por subcadena del gold set no encontraban
+        # nada. El JSON seguia siendo valido, con el contenido roto.
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8")
         print(json.dumps([{k: v for k, v in r.items() if k != "filas"}
                           for r in resultados], ensure_ascii=False, indent=2))
     else:

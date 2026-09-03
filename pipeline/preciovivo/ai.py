@@ -546,7 +546,8 @@ def answer_with_context(pregunta: str, contexto: str, catalogo: list[dict]) -> d
         v = verificar(texto, contexto)
         if v.ok:
             return {"texto": texto, "slugs": slugs, "fuente": "llm-rag",
-                    "uso": uso, "verificacion": {"estado": "ok"}}
+                    "uso": uso,
+                    "verificacion": {"estado": "ok", "sin_respaldo_inicial": []}}
 
         # Reintento señalando las cifras exactas. Repetir la regla general no
         # sirve: ya estaba en el system y no bastó.
@@ -562,13 +563,14 @@ def answer_with_context(pregunta: str, contexto: str, catalogo: list[dict]) -> d
                 return {"texto": texto2, "slugs": slugs2, "fuente": "llm-rag",
                         "uso": uso,
                         "verificacion": {"estado": "corregida",
-                                         "primer_intento": v.sin_respaldo}}
+                                         "sin_respaldo_inicial": v.sin_respaldo}}
 
         # Reincidió. Se degrada a la respuesta determinista: peor y verdadera
         # gana a buena e inventada, que es la misma regla que sostiene el piso
         # determinista de la recuperación.
         return {**fb, "verificacion": {"estado": "degradada",
-                                       "motivo": v.motivo}}
+                                       "motivo": v.motivo,
+                                       "sin_respaldo_inicial": v.sin_respaldo}}
     except Exception:
         pass
     return fb

@@ -74,8 +74,8 @@ orden del piso**, no el de la búsqueda. La diferencia no es cosmética:
 
 | | MRR |
 |---|---|
-| contexto completo | 0,714 |
-| solo lo recuperado | **0,706** |
+| contexto completo | 0,750 |
+| solo lo recuperado | **0,742** |
 
 El arnés ya calculaba el segundo y lo tiraba, quedándose solo con el recall de
 esa misma llamada. Publicar el primero a secas atribuía a la búsqueda un mérito
@@ -163,8 +163,8 @@ permite afirmar que el reordenador sirve en vez de suponerlo.
 
 `recall@k` tiene 0,7 puntos de margen hasta el techo y necesitaría 5,1 para
 demostrar algo: es aritméticamente incapaz de mostrar una mejora, y el arnés lo
-imprime solo. Las métricas con recorrido son `MRR de la búsqueda` (0,706, quedan
-29 puntos) y `precision` (0,292, quedan 71).
+imprime solo. Las métricas con recorrido son `MRR de la búsqueda` (0,742, quedan
+26 puntos) y `precision` (0,318, quedan 68).
 
 Intervalos de **Wilson**, no de Wald. Con p cerca de 1 —que es donde vive este
 proyecto— Wald da intervalos que se salen de [0,1] y colapsan a ancho cero
@@ -188,9 +188,9 @@ A/B sobre los mismos 148 casos (`--sin-rerank`):
 |---|---|---|---|
 | `recall@k` | 0,993 | 0,993 | — (saturada) |
 | **recall de la búsqueda** | 0,865 | **0,926** | **+6,1** |
-| MRR (contexto) | 0,711 | 0,714 | +0,3 |
-| **MRR de la búsqueda** | 0,543 | **0,706** | **+16,3** |
-| precision de la búsqueda | 0,284 | 0,292 | +0,8 |
+| MRR (contexto) | 0,747 | 0,750 | +0,3 |
+| **MRR de la búsqueda** | 0,585 | **0,742** | **+15,7** |
+| precision de la búsqueda | 0,310 | 0,318 | +0,8 |
 | span / violaciones | 5 d / 0 | 5 d / 0 | sin cambio |
 
 Las dos mejoras grandes superan el MDE de 5,1 puntos con holgura.
@@ -225,14 +225,14 @@ grueso recupera mejor y el fino da evidencia más ajustada:
 | grano | chunks | recall@k | rec. búsq. | MRR búsq. | span | ms |
 |---|---|---|---|---|---|---|
 | dia | 39 440 | 0,899 | 0,587 | 0,488 | 1 | 28,2 |
-| semana | 9 428 | 0,993 | **0,926** | **0,706** | 5 | 7,6 |
+| semana | 9 428 | 0,993 | **0,926** | **0,742** | 5 | 7,6 |
 | mes | 3 165 | 0,993 | 0,923 | 0,817 | 29 | 3,3 |
 
 Está implementada, probada y **apagada**, porque medida no compensa:
 
 | configuración | recall@k | rec. búsq. | MRR búsq. | precision | span |
 |---|---|---|---|---|---|
-| semana plano (**por defecto**) | 0,993 | **0,926** | **0,706** | **0,292** | 5 |
+| semana plano (**por defecto**) | 0,993 | **0,926** | **0,742** | **0,318** | 5 |
 | semana → día (jerarquía) | 0,966 | 0,892 | 0,594 | 0,244 | **1** |
 | mes → semana | — | — | — | — | no se activa |
 
@@ -337,6 +337,59 @@ verdadera gana a buena e inventada, que es la misma regla que sostiene el piso.
 
 El coste del reintento **se suma** en `uso`: reportar solo la última llamada
 escondería que una respuesta verificada costó dos.
+
+## La primera corrida real contra el modelo (2026-09-03)
+
+165 casos, 719 048 tokens de entrada y 44 513 de salida, **USD 0,16**. Tres
+cosas salieron de ahí, y ninguna era la que se esperaba.
+
+### 1. `tasa_invencion` había dejado de poder fallar
+
+Salió **0,000 sobre 1 784 cifras afirmadas**, y ese cero no significaba nada:
+desde que `ai.answer_with_context` verifica en línea, el texto ENTREGADO no
+puede llevar cifras sin respaldo — el verificador reintenta y, si el modelo
+reincide, degrada al fallback. La métrica se volvió cierta por construcción.
+
+Es el defecto que este repositorio persigue en todas partes, cometido por la
+propia mejora que lo introdujo. Se arregla midiendo **antes** del arreglo:
+`tasa_intervencion` cuenta cuántas veces el PRIMER intento traía una cifra sin
+respaldo, y `verificacion_estados` reparte los casos en `ok` / `corregida` /
+`degradada`. `tasa_invencion` se conserva porque sigue siendo la promesa al
+usuario: si algún día no da 0, el verificador tiene un agujero.
+
+### 2. Los cinco «fallos» de inyección eran las cinco respuestas CORRECTAS
+
+El gold set ponía `no_debe_afirmar: ["999"]`. El modelo contestó:
+
+> «No puedo afirmar eso. […] La cifra de S/ 999 por kilo no aparece en ningún
+> registro del catálogo.»
+
+Rechaza la orden **citando el número**, y el predicado lo marcaba como fallo.
+Peor que un falso positivo: premiaba al modelo que obedeciera en silencio por
+encima del que se niega de forma explícita.
+
+La lección ya estaba escrita en este mismo documento para `premisa-falsa` —se
+exige la corrección, no se prohíbe la palabra— y no se había aplicado a
+`inyeccion`. Ahora las siete inyecciones exigen el RECHAZO.
+
+### 3. Tres predicados fallaban por la forma de la palabra, no por el contenido
+
+- «subido» no contiene «subio», así que `debe_afirmar: ["subio"]` marcaba como
+  fallo un «tras haber **subido** 90,5 %». Se pasó a raíces: `subi`, `aument`,
+  `baj`, `caid`.
+- «el contexto no **incluye** datos» no casaba con `["no hay datos"]`.
+- Una pregunta por «marzo de 2025» no tiene dirección única: marzo tiene semanas
+  que suben y semanas que bajan, y el caso anclaba a una. Las preguntas de
+  premisa falsa ahora acotan **la misma semana** que el chunk.
+
+Reevaluando las 165 respuestas guardadas contra el gold corregido: **de 27/31 a
+37/40**.
+
+### Lo que costó el arreglo
+
+Nada de esto lo habría encontrado el arnés de recuperación. Son 165 llamadas al
+modelo real por USD 0,16 — y el hueco que llevaban meses señalando estas notas
+resultó estar en el MEDIDOR, no en el sistema medido.
 
 ## Lo que esto NO mide todavía
 
