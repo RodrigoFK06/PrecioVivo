@@ -122,7 +122,17 @@ jobs:
         # sentido —siempre habra casos limite— pero aqui no: la promesa del
         # prompt es "nunca inventes cifras", y una promesa con margen de
         # tolerancia no es una promesa.
-        run: python evals/run_generacion.py --umbral 0.0 ${{ github.ref == 'refs/heads/main' && '--exigir-modelo' || '' }}
+        # SE ARMA POR CONFIGURACION, NO POR RAMA.
+        #
+        # La version anterior exigia el modelo en `main` a secas, y el
+        # repositorio NO tiene ningun secreto configurado: habria puesto
+        # CI en rojo al primer push por una razon ajena al codigo.
+        #
+        # Para armarlo: anadir el secreto AI_API_KEY y luego poner la
+        # variable EXIGIR_MODELO=true (Settings > Secrets and variables >
+        # Actions). Hasta entonces el paso se salta y lo dice, que es lo
+        # que lleva pasando desde siempre sin que nadie lo supiera.
+        run: python evals/run_generacion.py --umbral 0.0 ${{ vars.EXIGIR_MODELO == 'true' && '--exigir-modelo' || '' }}
 
       - name: Reporte comparativo de granularidad
         env:
