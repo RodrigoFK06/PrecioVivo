@@ -12,7 +12,7 @@ corrida **refutó** la hipótesis original —el grano mensual recupera mejor, n
 peor— y eso obligó a agregar una métrica que midiera lo que de verdad se
 afirmaba.
 
-> **Todas las cifras de este documento se midieron el 2026-09-03** con el
+> **Todas las cifras se midieron el 2026-09-03 sobre el snapshot de ese dia** (9 512 chunks), con el
 > embebedor `fake`, `k=10`, grano semanal, sobre 165 casos (148 con predicado de
 > recuperación). Reproducibles con los comandos de abajo. Antes de citar una en
 > otro sitio, vuelve a correrla: la versión anterior de este README publicaba
@@ -75,7 +75,7 @@ orden del piso**, no el de la búsqueda. La diferencia no es cosmética:
 | | MRR |
 |---|---|
 | contexto completo | 0,750 |
-| solo lo recuperado | **0,742** |
+| solo lo recuperado | **0,748** |
 
 El arnés ya calculaba el segundo y lo tiraba, quedándose solo con el recall de
 esa misma llamada. Publicar el primero a secas atribuía a la búsqueda un mérito
@@ -134,7 +134,7 @@ Significa que el **piso determinista** hace buena parte del trabajo:
 |---|---|
 | contexto completo | 0,993 |
 | solo el piso, sin búsqueda | 0,797 |
-| solo la búsqueda, sin piso | **0,926** |
+| solo la búsqueda, sin piso | **0,939** |
 
 El piso son hasta 14 chunks que entran pase lo que pase, así que el recall está
 saturado por construcción. Las cifras que miden la búsqueda son **`solo lo
@@ -163,8 +163,8 @@ permite afirmar que el reordenador sirve en vez de suponerlo.
 
 `recall@k` tiene 0,7 puntos de margen hasta el techo y necesitaría 5,1 para
 demostrar algo: es aritméticamente incapaz de mostrar una mejora, y el arnés lo
-imprime solo. Las métricas con recorrido son `MRR de la búsqueda` (0,742, quedan
-26 puntos) y `precision` (0,318, quedan 68).
+imprime solo. Las métricas con recorrido son `MRR de la búsqueda` (0,748, quedan
+25 puntos) y `precision` (0,319, quedan 68).
 
 Intervalos de **Wilson**, no de Wald. Con p cerca de 1 —que es donde vive este
 proyecto— Wald da intervalos que se salen de [0,1] y colapsan a ancho cero
@@ -187,10 +187,10 @@ A/B sobre los mismos 148 casos (`--sin-rerank`):
 | | sin rerank | con rerank | Δ |
 |---|---|---|---|
 | `recall@k` | 0,993 | 0,993 | — (saturada) |
-| **recall de la búsqueda** | 0,865 | **0,926** | **+6,1** |
+| **recall de la búsqueda** | 0,851 | **0,939** | **+8,8** |
 | MRR (contexto) | 0,747 | 0,750 | +0,3 |
-| **MRR de la búsqueda** | 0,585 | **0,742** | **+15,7** |
-| precision de la búsqueda | 0,310 | 0,318 | +0,8 |
+| **MRR de la búsqueda** | 0,583 | **0,748** | **+16,5** |
+| precision de la búsqueda | 0,307 | 0,319 | +1,2 |
 | span / violaciones | 5 d / 0 | 5 d / 0 | sin cambio |
 
 Las dos mejoras grandes superan el MDE de 5,1 puntos con holgura.
@@ -225,14 +225,14 @@ grueso recupera mejor y el fino da evidencia más ajustada:
 | grano | chunks | recall@k | rec. búsq. | MRR búsq. | span | ms |
 |---|---|---|---|---|---|---|
 | dia | 39 440 | 0,899 | 0,587 | 0,488 | 1 | 28,2 |
-| semana | 9 428 | 0,993 | **0,926** | **0,742** | 5 | 7,6 |
+| semana | 9 512 | 0,993 | **0,939** | **0,748** | 5 | 7,6 |
 | mes | 3 165 | 0,993 | 0,923 | 0,817 | 29 | 3,3 |
 
 Está implementada, probada y **apagada**, porque medida no compensa:
 
 | configuración | recall@k | rec. búsq. | MRR búsq. | precision | span |
 |---|---|---|---|---|---|
-| semana plano (**por defecto**) | 0,993 | **0,926** | **0,742** | **0,318** | 5 |
+| semana plano (**por defecto**) | 0,993 | **0,939** | **0,748** | **0,319** | 5 |
 | semana → día (jerarquía) | 0,966 | 0,892 | 0,594 | 0,244 | **1** |
 | mes → semana | — | — | — | — | no se activa |
 
