@@ -93,11 +93,29 @@ from preciovivo.retrieval import Recuperador, catalogo_de  # noqa: E402
 GOLD = AQUI / "retrieval_gold.json"
 SNAPSHOT = AQUI.parent.parent / "web" / "data" / "snapshot.json"
 
-# DeepSeek, USD por millón de tokens. Se declara aquí y no se lee de ningún
-# sitio: si cambia el proveedor, este número miente y hay que actualizarlo a
-# mano. Un coste calculado con precios viejos es peor que no calcularlo.
-USD_POR_M_ENTRADA = 0.27
-USD_POR_M_SALIDA = 1.10
+# COSTE. Las dos constantes que había aquí -0,27 de entrada y 1,10 de salida-
+# eran precios viejos de `deepseek-chat` y SOBRESTIMABAN un 50 %: reportaban
+# 0,14 USD para una corrida que cuesta 0,09. El propio comentario avisaba de que
+# se quedarían obsoletas, y se quedaron.
+#
+# Ahora es UNA tarifa mezclada, y de procedencia comprobable: sale de la página
+# de consumo real de la cuenta el 2026-09-03 — 507 peticiones, 658 849 tokens,
+# 0,14 USD — o sea 0,2125 USD por millón, sobre `deepseek-chat` (que la API
+# resuelve hoy a `deepseek-v4-flash`).
+#
+# POR QUÉ UNA SOLA Y NO DOS. Esa página no desglosa entrada y salida, así que
+# dos constantes exigirían inventarme el reparto, que es exactamente el error
+# que se acaba de corregir. Una cifra derivada de un consumo medido vale más que
+# dos que no puedo sostener.
+#
+# LÍMITE DECLARADO: al ser mezclada, una corrida con mucha más salida de lo
+# habitual queda SUBESTIMADA. La verdad exacta son los tokens, que este arnés ya
+# imprime aparte; el USD es la comodidad, no la medida.
+#
+# Y OJO CON EL DÍA: desde el 2026-08-23 DeepSeek aplica tarifa de valle todo el
+# fin de semana (hora de Pekín). Una corrida de sábado sale más barata que este
+# número; una de martes por la tarde, no.
+USD_POR_M_MEZCLADO = 0.2125
 
 # LA COMPROBACION DE CIFRAS VIVE EN `preciovivo.verificador`.
 #
@@ -183,7 +201,7 @@ def resumir(filas: list[dict]) -> dict:
     usos = [f["uso"] for f in filas if f.get("uso")]
     ent = sum(u["entrada"] or 0 for u in usos)
     sal = sum(u["salida"] or 0 for u in usos)
-    usd = ent / 1e6 * USD_POR_M_ENTRADA + sal / 1e6 * USD_POR_M_SALIDA
+    usd = (ent + sal) / 1e6 * USD_POR_M_MEZCLADO
     # Una respuesta del fallback determinista no dice nada sobre el modelo: si
     # aparece, el arnés midió otra cosa y hay que decirlo en vez de promediarlo.
     sin_modelo = [f["id"] for f in filas if f["fuente"] != "llm-rag"]
@@ -264,14 +282,15 @@ def main(argv=None) -> int:
     snap = cargar_snapshot(args.snapshot)
     emb = get_embedder(args.embedder)
     if args.embedder in ("auto", "api", "bedrock"):
-        print(f"embebedor: {emb.firma}")
+        print(f"embebedor: {emb.firma}", file=sys.stderr)
         print("  AVISO: construir el indice con este embebedor CONSUME CUOTA de "
-              "embeddings.")
+              "embeddings.", file=sys.stderr)
         print("  Lo ya calculado sale de la cache; solo se pagan los chunks "
-              "nuevos. Con --embedder local no se consume nada.")
+              "nuevos. Con --embedder local no se consume nada.", file=sys.stderr)
     elif args.embedder == "fake":
         print("embebedor: fake -- el contexto NO es el que entregaria el "
-              "producto. La invencion de cifras medida asi no es representativa.")
+              "producto. La invencion de cifras medida asi no es representativa.",
+              file=sys.stderr)
     rec = Recuperador.desde_snapshot(snap, embedder=emb)
     catalogo = catalogo_de(snap)
 

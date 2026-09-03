@@ -37,6 +37,7 @@ import gzip
 import json
 import os
 import re
+import sys
 from dataclasses import asdict
 from datetime import date, timedelta
 from pathlib import Path
@@ -175,7 +176,7 @@ def embed_con_cache(chunks: list[Chunk], emb: Embedder,
 
     if faltan:
         print(f"index: {len(chunks) - len(faltan):,} embeddings en caché · "
-              f"{len(faltan):,} por calcular", flush=True)
+              f"{len(faltan):,} por calcular", flush=True, file=sys.stderr)
         import time
 
         lotes = [faltan[i:i + EMBED_LOTE] for i in range(0, len(faltan), EMBED_LOTE)]
@@ -195,9 +196,11 @@ def embed_con_cache(chunks: list[Chunk], emb: Embedder,
             restante = (time.monotonic() - t0) / hechos * (len(faltan) - hechos)
             print(f"  embeddings: {hechos:>6,}/{len(faltan):,} "
                   f"({100 * hechos / len(faltan):5.1f}%) · lote {n}/{len(lotes)} · "
-                  f"faltan ~{restante / 60:.0f} min", flush=True)
+                  f"faltan ~{restante / 60:.0f} min", flush=True,
+                  file=sys.stderr)
     else:
-        print(f"index: los {len(chunks):,} embeddings estaban en caché", flush=True)
+        print(f"index: los {len(chunks):,} embeddings estaban en caché",
+              flush=True, file=sys.stderr)
 
     return np.stack([cache[k] for k in claves]).astype(np.float32)
 
