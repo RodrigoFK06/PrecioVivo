@@ -118,9 +118,18 @@ def evaluar_caso(caso: dict, chunks: list[Chunk]) -> dict:
                 break
 
     violaciones = [c.id for c in chunks if any(cumple(c, p) for p in prohibidos)]
+
+    # PRECISION. Cuanta de la evidencia entregada es relevante. recall dice si el
+    # hecho llego; precision dice cuanto ruido llego con el. El piso mete ~9
+    # chunks pase lo que pase, asi que sin esta metrica el coste de esa garantia
+    # no se ve en ningun numero.
+    utiles = sum(1 for c in chunks if any(cumple(c, p) for p in esperados))
+    precision = (utiles / len(chunks)) if chunks and esperados else None
+
     return {
         "id": caso["id"], "categoria": caso.get("categoria", "?"),
         "recall": recall, "rr": rr if esperados else None,
+        "precision": precision,
         "satisfechos": satisfechos, "esperados": len(esperados),
         "spans": spans, "violaciones": violaciones,
     }
@@ -129,10 +138,13 @@ def evaluar_caso(caso: dict, chunks: list[Chunk]) -> dict:
 # --------------------------------------------------------------------------- #
 # Corrida
 # --------------------------------------------------------------------------- #
-def correr(gold: dict, snapshot, embebedor, granularidad: str, k: int) -> dict:
+def correr(gold: dict, snapshot, embebedor, granularidad: str, k: int,
+           rerank: bool = True, jerarquia: bool = False,
+           grano_hijo: str = "semana") -> dict:
     t0 = time.time()
     rec = Recuperador.desde_snapshot(snapshot, embedder=embebedor,
-                                     granularidad=granularidad)
+                                     granularidad=granularidad, rerank=rerank,
+                                     jerarquia=jerarquia, grano_hijo=grano_hijo)
     t_indice = time.time() - t0
 
     filas, t_consultas = [], 0.0
@@ -144,8 +156,14 @@ def correr(gold: dict, snapshot, embebedor, granularidad: str, k: int) -> dict:
         # de verdad llega al modelo. La columna 'solo recuperado' aísla la
         # calidad de la búsqueda de la garantía del piso.
         fila = evaluar_caso(caso, ctx.chunks()[:max(k, len(ctx.piso) + k)])
-        fila["recall_sin_piso"] = evaluar_caso(
-            caso, [r.chunk for r in ctx.recuperados])["recall"]
+        # El MRR del contexto completo mide el orden del PISO, no el de la
+        # busqueda: `Contexto.chunks()` devuelve `piso + recuperados`, y el piso
+        # ocupa las primeras ~9 posiciones. Este `evaluar_caso` ya calculaba el
+        # rr sin piso y se tiraba, quedandose solo con el recall.
+        sin_piso = evaluar_caso(caso, [r.chunk for r in ctx.recuperados])
+        fila["recall_sin_piso"] = sin_piso["recall"]
+        fila["rr_sin_piso"] = sin_piso["rr"]
+        fila["precision_sin_piso"] = sin_piso["precision"]
         fila["recall_solo_piso"] = evaluar_caso(caso, ctx.piso)["recall"]
         filas.append(fila)
 
@@ -154,6 +172,7 @@ def correr(gold: dict, snapshot, embebedor, granularidad: str, k: int) -> dict:
     spans = [s for f in filas for s in f["spans"]]
     return {
         "granularidad": granularidad,
+        "rerank": rerank,
         "n_chunks": len(rec.chunks),
         "n_casos": len(filas),
         "n_casos_con_gold": len(con_gold),
@@ -161,6 +180,9 @@ def correr(gold: dict, snapshot, embebedor, granularidad: str, k: int) -> dict:
         "recall_sin_piso": sum(f["recall_sin_piso"] or 0 for f in con_gold) / n,
         "recall_solo_piso": sum(f["recall_solo_piso"] or 0 for f in con_gold) / n,
         "mrr": sum(f["rr"] or 0 for f in con_gold) / n,
+        "mrr_sin_piso": sum(f["rr_sin_piso"] or 0 for f in con_gold) / n,
+        "precision": sum(f["precision"] or 0 for f in con_gold) / n,
+        "precision_sin_piso": sum(f["precision_sin_piso"] or 0 for f in con_gold) / n,
         "perfectos": sum(1 for f in con_gold if f["recall"] == 1.0),
         "span_mediano": statistics.median(spans) if spans else None,
         "n_spans": len(spans),
@@ -192,7 +214,13 @@ def imprimir(res: dict, verboso: bool) -> None:
           f"(sin el piso determinista)")
     print(f"    solo el piso        {res['recall_solo_piso']:.3f}   "
           f"(sin la búsqueda)")
-    print(f"  MRR                   {res['mrr']:.3f}")
+    print(f"  MRR                   {res['mrr']:.3f}   "
+          f"(ordena el PISO: son las primeras ~9 posiciones)")
+    print(f"    solo lo recuperado  {res['mrr_sin_piso']:.3f}   "
+          f"<- el que mide la BUSQUEDA")
+    print(f"  precision@k           {res['precision']:.3f}   "
+          f"(fraccion del contexto que es relevante)")
+    print(f"    solo lo recuperado  {res['precision_sin_piso']:.3f}")
 
     # Incertidumbre, y sobre todo: que mejora NO puede detectar esta muestra.
     # Va debajo de los puntos y no en una nota al pie porque es la lectura que
@@ -200,7 +228,8 @@ def imprimir(res: dict, verboso: bool) -> None:
     print()
     print("  incertidumbre y poder de deteccion:")
     for etiqueta, valor in (("recall@k", res["recall"]),
-                            ("solo lo recuperado", res["recall_sin_piso"])):
+                            ("recall recuperado", res["recall_sin_piso"]),
+                            ("MRR recuperado", res["mrr_sin_piso"])):
         for linea in linea_mde(etiqueta, diagnostico(valor, n)):
             print(linea)
     if res["span_mediano"] is not None:
@@ -238,6 +267,11 @@ def main() -> int:
     ap.add_argument("--embedder", default="fake",
                     choices=["fake", "local", "api", "bedrock", "auto"])
     ap.add_argument("--snapshot", default=str(SNAPSHOT))
+    ap.add_argument("--jerarquia", action="store_true",
+                    help="busca en el grano de --granularidad y entrega el hijo")
+    ap.add_argument("--grano-hijo", default="semana", choices=list(GRANULARIDADES))
+    ap.add_argument("--sin-rerank", action="store_true",
+                    help="desactiva el reordenamiento estructurado (para A/B)")
     ap.add_argument("--json", action="store_true", help="salida en JSON")
     ap.add_argument("-v", "--verboso", action="store_true")
     args = ap.parse_args()
@@ -263,7 +297,9 @@ def main() -> int:
             print("  Para medir calidad real: --embedder local  (o api).")
         print(f"snapshot: {ruta}")
 
-    resultados = [correr(gold, str(ruta), embebedor, g, args.k)
+    resultados = [correr(gold, str(ruta), embebedor, g, args.k,
+                         rerank=not args.sin_rerank, jerarquia=args.jerarquia,
+                         grano_hijo=args.grano_hijo)
                   for g in granularidades]
 
     if args.json:
@@ -275,12 +311,14 @@ def main() -> int:
         if len(resultados) > 1:
             print("\n--- comparación de granularidad "
                   "(los números que cita el README) ---")
-            print(f"  {'grano':<8} {'chunks':>8} {'recall@k':>10} {'MRR':>8} "
+            print(f"  {'grano':<8} {'chunks':>8} {'recall@k':>10} "
+                  f"{'rec.busq':>9} {'MRR':>8} {'MRR busq':>9} "
                   f"{'span(d)':>9} {'ms/consulta':>12}")
             for r in resultados:
                 span = f"{r['span_mediano']:.0f}" if r["span_mediano"] is not None else "—"
                 print(f"  {r['granularidad']:<8} {r['n_chunks']:>8} "
-                      f"{r['recall']:>10.3f} {r['mrr']:>8.3f} {span:>9} "
+                      f"{r['recall']:>10.3f} {r['recall_sin_piso']:>9.3f} "
+                      f"{r['mrr']:>8.3f} {r['mrr_sin_piso']:>9.3f} {span:>9} "
                       f"{r['ms_consulta']:>12.1f}")
             print("\n  recall/MRR miden si el chunk correcto SE ENCUENTRA.")
             print("  span mide cuántos días cubre la evidencia que se entrega:")

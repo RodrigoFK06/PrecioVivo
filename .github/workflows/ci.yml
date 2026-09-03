@@ -122,7 +122,7 @@ jobs:
         # sentido —siempre habra casos limite— pero aqui no: la promesa del
         # prompt es "nunca inventes cifras", y una promesa con margen de
         # tolerancia no es una promesa.
-        run: python evals/run_generacion.py --umbral 0.0
+        run: python evals/run_generacion.py --umbral 0.0 ${{ github.ref == 'refs/heads/main' && '--exigir-modelo' || '' }}
 
       - name: Reporte comparativo de granularidad
         env:

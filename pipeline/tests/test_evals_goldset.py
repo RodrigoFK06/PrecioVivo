@@ -137,15 +137,33 @@ def test_los_casos_de_abstencion_siguen_sin_catalogo(gold, chunks):
     evaluación en un incentivo a negar un dato que sí se tiene — el incidente
     del pollo vivo, pero provocado por el propio medidor.
     """
+    # SOLO la familia `sin-respuesta`. `debe_abstenerse` acabo significando tres
+    # cosas distintas y esta prueba solo sabe juzgar una:
+    #
+    #   sin-respuesta    el producto no existe          -> esto es lo que mide
+    #   fuera-de-rango   el producto existe, la FECHA no
+    #   inyeccion        negarse a obedecer una orden hostil
+    #
+    # Aplicarla a las tres marcaba como caducado cualquier caso que nombrara un
+    # producto real -- que es justo lo que hacen las otras dos familias: «¿como
+    # afecto la pandemia de 2020 al precio de la cebolla cabeza roja?» abstiene
+    # por la fecha, no porque la cebolla haya dejado de existir.
     fallos = []
     for caso in gold["casos"]:
         if not caso.get("debe_abstenerse"):
             continue
+        if caso.get("categoria") != "sin-respuesta":
+            continue
         # el término que se pregunta, en crudo: la última palabra significativa
         termino = _plano(caso["pregunta"]).rstrip("?").split()[-1]
+        # `slug` es None en los chunks de mercado-dia, y `sorted` sobre una
+        # mezcla de None y str revienta con TypeError. Se filtra aqui: el fallo
+        # no aparecia porque ningun caso de abstencion habia hecho match con un
+        # resumen de mercado todavia.
         hits = [c.get("slug") for c in chunks
                 if termino in _plano(c.get("texto") or "")
                 or termino in _plano(c.get("slug") or "")]
+        hits = [h for h in hits if h]
         if hits:
             fallos.append((caso["id"], termino, sorted(set(hits))[:3]))
     assert not fallos, (
@@ -156,10 +174,15 @@ def test_los_casos_de_abstencion_siguen_sin_catalogo(gold, chunks):
 def test_los_casos_sin_predicado_positivo_declaran_por_que(gold):
     """`debe_recuperar: []` tiene que venir con `debe_abstenerse` o con
     `debe_afirmar`. Un caso sin nada que comprobar no falla nunca."""
+    # `no_debe_afirmar` cuenta: `run_generacion` lo comprueba (`dijo_prohibido`)
+    # y falla la corrida si se dice lo prohibido. Faltaba en esta lista, asi que
+    # un caso de inyeccion que solo prohibe la cifra dictada -- que es
+    # exactamente como se comprueba una inyeccion -- se marcaba como mudo.
     mudos = [c["id"] for c in gold["casos"]
              if not c.get("debe_recuperar")
              and not c.get("debe_abstenerse")
              and not c.get("debe_afirmar")
+             and not c.get("no_debe_afirmar")
              and not c.get("no_debe_recuperar")]
     assert not mudos, f"casos que no pueden fallar nunca: {mudos}"
 

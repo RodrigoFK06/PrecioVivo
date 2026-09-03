@@ -57,6 +57,8 @@ from .corpus import (
     cargar_snapshot,
 )
 from .embeddings import Embedder, get_embedder
+from .jerarquia import Jerarquia, deduplicar
+from .rerank import reordenar
 from .vectorstore import Filtro, IndiceVectorial, NumpyIndex, Resultado
 
 # Constante de RRF. 60 es el valor del paper original y funciona bien sin tunear;
@@ -75,6 +77,10 @@ PISO_ANOMALIAS = 3
 PISO_PRESUPUESTO = 14
 # Chunks de mercado-día que entran al piso en preguntas AGREGADAS (sin producto).
 PISO_MERCADO_DIA = 3
+# Cuántos candidatos de la fusión pasan al reordenamiento. Más que `k` porque el
+# reordenador solo puede rescatar lo que le llega: si la fusión ya truncó a 10,
+# el chunk correcto en la posición 15 no existe para él.
+RERANK_CANDIDATOS = 30
 
 _MESES_NOMBRE = {
     "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
@@ -456,9 +462,13 @@ class Contexto:
     n_candidatos: int = 0
 
     def chunks(self) -> list[Chunk]:
-        """Piso primero, luego recuperados, sin repetir."""
-        vistos = {c.id for c in self.piso}
-        return self.piso + [r.chunk for r in self.recuperados if r.chunk.id not in vistos]
+        """Piso primero, luego recuperados, sin repetir.
+
+        La deduplicación va aquí y no en cada llamada porque `a_prompt` y el
+        arnés tienen que ver EXACTAMENTE el mismo contexto: si el prompt
+        deduplica y la evaluación no, se mide algo que el modelo nunca recibió.
+        """
+        return deduplicar(self.piso + [r.chunk for r in self.recuperados])
 
     def a_prompt(self) -> str:
         """Serializa el contexto para el LLM.
@@ -492,16 +502,22 @@ class Contexto:
                 "los que seguimos: dilo explícitamente y no respondas con el "
                 "precio de otro producto por parecido. El contexto de abajo es "
                 "lo más cercano que encontró la búsqueda, no una coincidencia.")
-        if self.piso:
+        entregados_ids = {c.id for c in self.chunks()}
+        piso_vivo = [c for c in self.piso if c.id in entregados_ids]
+        if piso_vivo:
             que = ("productos que menciona la pregunta" if self.consulta.slugs
                    else "resumen del mercado en las fechas relevantes")
             partes.append(f"=== CONTEXTO GARANTIZADO ({que}) ===")
-            partes.extend(c.texto for c in self.piso)
-        recuperados = [r for r in self.recuperados
-                       if r.chunk.id not in {c.id for c in self.piso}]
+            partes.extend(c.texto for c in piso_vivo)
+        # Se parte de la lista YA deduplicada para que el prompt y el arnés vean
+        # lo mismo; `deduplicar` puede tirar un chunk del piso si la búsqueda
+        # trajo un hijo suyo más ajustado.
+        entregados = self.chunks()
+        ids_piso = {c.id for c in self.piso}
+        recuperados = [c for c in entregados if c.id not in ids_piso]
         if recuperados:
             partes.append("=== CONTEXTO RECUPERADO (por relevancia) ===")
-            partes.extend(r.chunk.texto for r in recuperados)
+            partes.extend(c.texto for c in recuperados)
         return "\n\n".join(partes)
 
 
@@ -513,7 +529,10 @@ class Recuperador:
 
     def __init__(self, chunks: list[Chunk], indice: IndiceVectorial,
                  embedder: Embedder, catalogo: dict[str, str],
-                 fecha_ref: str | None):
+                 fecha_ref: str | None, rerank: bool = True,
+                 jerarquia: "Jerarquia | None" = None):
+        self.rerank = rerank
+        self.jerarquia = jerarquia
         self.chunks = chunks
         self.indice = indice
         self.embedder = embedder
@@ -528,6 +547,9 @@ class Recuperador:
         cls, origen: Any, embedder: Embedder | None = None,
         granularidad: str = GRANULARIDAD_DEFAULT,
         indice: IndiceVectorial | None = None,
+        rerank: bool = True,
+        jerarquia: bool = False,
+        grano_hijo: str = "semana",
     ) -> "Recuperador":
         """Construye todo desde un snapshot, embebiendo el corpus en el momento.
 
@@ -549,7 +571,11 @@ class Recuperador:
         idx.construir(chunks, embed_con_cache(chunks, emb),
                       granularidad, emb.firma)
         catalogo = catalogo_de(snap)
-        return cls(chunks, idx, emb, catalogo, snap.get("latestFecha"))
+        jer = (Jerarquia(padres=chunks,
+                         hijos=build_corpus(snap, granularidad=grano_hijo))
+               if jerarquia else None)
+        return cls(chunks, idx, emb, catalogo, snap.get("latestFecha"),
+                   rerank=rerank, jerarquia=jer)
 
     @classmethod
     def desde_artefacto(
@@ -650,7 +676,8 @@ class Recuperador:
 
     # --- recuperación -----------------------------------------------------
     def recuperar(self, pregunta: str, k: int = 8,
-                  candidatos: int = CANDIDATOS) -> Contexto:
+                  candidatos: int = CANDIDATOS,
+                  rerank: bool | None = None) -> Contexto:
         consulta = parsear(pregunta, self.catalogo, self.fecha_ref)
         filtro = consulta.a_filtro()
 
@@ -675,13 +702,40 @@ class Recuperador:
 
         fusion = rrf([lex, vec])
         # Desempate por id, por la misma razón que en el vectorstore.
-        orden = sorted(fusion.items(), key=lambda kv: (-kv[1], kv[0]))[:k]
-        recuperados = [Resultado(chunk=self._por_id[cid], score=score)
-                       for cid, score in orden if cid in self._por_id]
+        orden = sorted(fusion.items(), key=lambda kv: (-kv[1], kv[0]))
+
+        usar_rerank = self.rerank if rerank is None else rerank
+        if usar_rerank:
+            # Se reordena una ventana MÁS ANCHA que k y luego se recorta: el
+            # reordenador no puede rescatar lo que la fusión ya tiró.
+            ventana = [(self._por_id[cid], sc)
+                       for cid, sc in orden[:max(k, RERANK_CANDIDATOS)]
+                       if cid in self._por_id]
+            recuperados = [Resultado(chunk=c, score=sc)
+                           for c, sc, _ in reordenar(
+                               ventana, pregunta, consulta.slugs,
+                               consulta.fecha_desde, consulta.fecha_hasta)][:k]
+        else:
+            recuperados = [Resultado(chunk=self._por_id[cid], score=score)
+                           for cid, score in orden[:k] if cid in self._por_id]
+
+        piso = self._piso(consulta)
+        if self.jerarquia is not None:
+            # Se expanden LAS DOS listas con la misma ventana: si solo se
+            # expandiera la búsqueda, el piso seguiría entregando el periodo
+            # ancho y `deduplicar` tiraría justo al hijo ajustado por estar
+            # contenido en él.
+            d0, d1 = consulta.fecha_desde, consulta.fecha_hasta
+            piso = self.jerarquia.expandir(piso, d0, d1)
+            recuperados = [
+                Resultado(chunk=c, score=r.score)
+                for r in recuperados
+                for c in self.jerarquia.expandir([r.chunk], d0, d1)
+            ]
 
         return Contexto(
             pregunta=pregunta, consulta=consulta,
-            piso=self._piso(consulta),
+            piso=piso,
             recuperados=recuperados,
             n_candidatos=len(fusion),
         )

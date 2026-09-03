@@ -78,7 +78,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
 import unicodedata
 from pathlib import Path
@@ -88,6 +87,7 @@ sys.path.insert(0, str(AQUI.parent))
 
 from preciovivo import ai  # noqa: E402
 from preciovivo.corpus import cargar_snapshot  # noqa: E402
+from preciovivo.embeddings import get_embedder  # noqa: E402
 from preciovivo.retrieval import Recuperador, catalogo_de  # noqa: E402
 
 GOLD = AQUI / "retrieval_gold.json"
@@ -99,104 +99,24 @@ SNAPSHOT = AQUI.parent.parent / "web" / "data" / "snapshot.json"
 USD_POR_M_ENTRADA = 0.27
 USD_POR_M_SALIDA = 1.10
 
-# Tolerancia relativa al comparar una cifra de la respuesta con una derivación.
-# 1% absorbe el redondeo del modelo ("+3,0%" por 2,999…%) sin dejar pasar
-# invenciones: una cifra inventada rara vez cae a menos del 1% de una derivación
-# legítima.
-TOLERANCIA = 0.01
-
-# QUÉ NÚMEROS CUENTAN, Y LO QUE COSTÓ ACERTAR
+# LA COMPROBACION DE CIFRAS VIVE EN `preciovivo.verificador`.
 #
-# La primera versión descartaba todo valor menor que 10 para no ahogarse en
-# ruido ("2 días", "los 5 más baratos"). Descartaba, por tanto, TODOS LOS
-# PRECIOS: S/ 1.03, S/ 4.87, un +3,0%. El arnés reportó 203 cifras afirmadas y
-# cero invenciones, y ese cero no significaba nada — solo había mirado toneladas
-# y fechas. La cifra que este producto no puede inventar era justamente la que no
-# se estaba midiendo.
+# Estaba aqui, y solo aqui: el sistema sabia reconocer una cifra inventada pero
+# solo lo hacia DESPUES, en una corrida de evaluacion, sobre los casos que
+# tuvieran AI_API_KEY. Ahora la misma funcion corre EN LINEA sobre cada
+# respuesta (`ai.answer_with_context`) y este arnes la importa en vez de
+# mantener su copia.
 #
-# Se detectó probando el detector contra invenciones conocidas, no leyendo su
-# resultado. Un indicador que siempre sale perfecto es indistinguible de uno
-# roto, y la única forma de separarlos es enseñarle algo que DEBE marcar.
-#
-# Regla actual: cuentan los decimales (un precio o un porcentaje casi nunca es
-# entero redondo) y los enteros >= 10. Se descartan los años y los enteros de un
-# dígito, que suelen ser conteos del propio texto y no datos.
-#
-# Límite conocido y aceptado: un precio entero inventado ("S/ 5") se escaparía.
-# En esta serie los precios llevan decimales, así que el hueco es estrecho — pero
-# existe y queda dicho.
-_ANIOS = {float(a) for a in range(2000, 2100)}
+# Importa y no reimplementa a proposito: si el arnes midiera con una definicion
+# de "cifra sin respaldo" y el producto actuara con otra, la evaluacion estaria
+# describiendo un sistema distinto del que responde.
+from preciovivo.verificador import (  # noqa: E402
+    TOLERANCIA,
+    afirma_un_precio,
+    clasificar_cifras,
+)
 
-
-def _numeros(texto: str) -> set[float]:
-    """Los números de un texto, normalizados.
-
-    Maneja las tres formas que conviven en este dominio: `1.03`, `1,03` y
-    `2 355` con espacio de millares. El orden de las sustituciones importa —
-    primero se quitan los separadores de millar, luego se unifica el decimal.
-    """
-    limpio = re.sub(r"(?<=\d)[  ](?=\d{3}\b)", "", texto)
-    fuera = set()
-    for bruto in re.findall(r"-?\d+(?:[.,]\d+)?", limpio):
-        try:
-            v = abs(float(bruto.replace(",", ".")))
-        except ValueError:
-            continue
-        if v in _ANIOS:
-            continue
-        if "." not in bruto and "," not in bruto and v < 10:
-            continue
-        fuera.add(round(v, 4))
-    return fuera
-
-
-def _derivable(x: float, base: set[float]) -> bool:
-    """¿Sale `x` de dos números del contexto por aritmética simple?
-
-    Se cubren las dos operaciones que el prompt pide de forma explícita —
-    describir un movimiento y su magnitud— y ninguna más. Ampliar el repertorio
-    haría más fácil «justificar» cualquier número, que es justo lo contrario de
-    lo que este arnés busca.
-    """
-    cerca = lambda a, b: abs(a - b) <= max(TOLERANCIA * max(abs(b), 1.0), 0.005)  # noqa: E731
-    for a in base:
-        for b in base:
-            if a == b:
-                continue
-            if cerca(x, abs(a - b)):
-                return True
-            if b and cerca(x, abs(100.0 * (a - b) / b)):
-                return True
-    return False
-
-
-def clasificar_cifras(respuesta: str, contexto: str) -> dict:
-    """Reparte las cifras de la respuesta en las tres categorías."""
-    del_contexto = _numeros(contexto)
-    en_contexto, derivadas, sin_respaldo = [], [], []
-    for x in sorted(_numeros(respuesta)):
-        if any(abs(x - c) <= 0.005 for c in del_contexto):
-            en_contexto.append(x)
-        elif _derivable(x, del_contexto):
-            derivadas.append(x)
-        else:
-            sin_respaldo.append(x)
-    return {"en_contexto": en_contexto, "derivadas": derivadas,
-            "sin_respaldo": sin_respaldo}
-
-
-_PRECIO = re.compile(r"S/\s*\d|\d+(?:[.,]\d+)?\s*soles", re.IGNORECASE)
-
-
-def afirma_un_precio(respuesta: str) -> bool:
-    """¿La respuesta pone precio a algo?
-
-    Se usa solo en los casos de abstención. Una respuesta correcta a «¿cuánto
-    cuesta la papaya?» explica que no está en el catálogo; una incorrecta
-    responde con el precio de la papa por parecido de nombre, que es el fallo
-    que el gold set lleva marcado desde el principio.
-    """
-    return bool(_PRECIO.search(respuesta))
+__all__ = ["TOLERANCIA", "afirma_un_precio", "clasificar_cifras"]
 
 
 def _plano(s: str) -> str:
@@ -295,14 +215,45 @@ def main(argv=None) -> int:
     ap.add_argument("--snapshot", default=str(SNAPSHOT))
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--solo", help="correr un caso por id")
+    # POR QUE ESTA BANDERA EXISTE, Y POR QUE EL DEFECTO NO ES `fake`.
+    #
+    # `run_retrieval.py` usa `fake` por defecto: gratis, sin red, determinista.
+    # Aqui NO puede ser el defecto -- medir si el modelo inventa cifras sobre un
+    # contexto recuperado con vectores de juguete mide otra cosa. El contexto
+    # tiene que ser el que el producto entregaria de verdad.
+    #
+    # Pero el coste estaba OCULTO: construir el indice con el proveedor real
+    # consume cuota de embeddings antes de la primera llamada al modelo, y nada
+    # lo advertia. Ahora se avisa y se puede elegir.
+    ap.add_argument("--embedder", default="auto",
+                    choices=["auto", "api", "bedrock", "local", "fake"],
+                    help="embebedor del indice (default auto: usa el real y "
+                         "consume cuota)")
+    ap.add_argument("--exigir-modelo", action="store_true",
+                    help="falla si no hay clave, en vez de saltarse la medicion")
     args = ap.parse_args(argv)
 
     if not (os.environ.get("AI_API_KEY") or os.environ.get("DEEPSEEK_API_KEY")):
         # No se degrada en silencio: sin clave no hay nada que medir, y decir
-        # "0 invenciones" sobre respuestas de plantilla sería mentir con un
-        # número. Código 0 para que CI pueda saltarlo sin fallar.
-        print("SIN CLAVE (AI_API_KEY): la evaluación de generación necesita el "
-              "modelo real. No se mide nada y no se inventa un número.")
+        # "0 invenciones" sobre respuestas de plantilla seria mentir con un
+        # numero.
+        print("SIN CLAVE (AI_API_KEY): la evaluacion de generacion necesita el "
+              "modelo real. No se mide nada y no se inventa un numero.")
+        # POR QUE EXISTE `--exigir-modelo`.
+        #
+        # Salir con 0 deja que CI siga en verde sin haber medido nada. La
+        # mayoria del valor adversarial de este gold set vive en la capa de
+        # generacion, asi que una clave ausente o caducada apagaba en silencio
+        # la parte mas cara de la suite y nada chirriaba: exactamente el fallo
+        # que este repositorio persigue en todas partes -- un indicador que
+        # siempre sale perfecto es indistinguible de uno roto.
+        #
+        # Con la bandera, la rama principal exige que la medicion OCURRA. Sin
+        # ella (forks, PRs de fuera) se sigue pudiendo saltar.
+        if args.exigir_modelo:
+            print("FALLA: --exigir-modelo y no hay AI_API_KEY. La evaluacion "
+                  "adversarial de generacion NO se ha ejecutado.", file=sys.stderr)
+            return 1
         return 0
 
     gold = json.loads(GOLD.read_text(encoding="utf-8"))
@@ -311,7 +262,17 @@ def main(argv=None) -> int:
         casos = [c for c in casos if c["id"] == args.solo]
 
     snap = cargar_snapshot(args.snapshot)
-    rec = Recuperador.desde_snapshot(snap)
+    emb = get_embedder(args.embedder)
+    if args.embedder in ("auto", "api", "bedrock"):
+        print(f"embebedor: {emb.firma}")
+        print("  AVISO: construir el indice con este embebedor CONSUME CUOTA de "
+              "embeddings.")
+        print("  Lo ya calculado sale de la cache; solo se pagan los chunks "
+              "nuevos. Con --embedder local no se consume nada.")
+    elif args.embedder == "fake":
+        print("embebedor: fake -- el contexto NO es el que entregaria el "
+              "producto. La invencion de cifras medida asi no es representativa.")
+    rec = Recuperador.desde_snapshot(snap, embedder=emb)
     catalogo = catalogo_de(snap)
 
     caso_por_id = {c["id"]: c for c in casos}
@@ -322,7 +283,7 @@ def main(argv=None) -> int:
         print(json.dumps({"resumen": resumen, "filas": filas},
                          ensure_ascii=False, indent=1))
     else:
-        print(f"== Generación · {resumen['casos']} casos · embebedor real ==\n")
+        print(f"== Generación · {resumen['casos']} casos · {emb.firma} ==\n")
         for f in filas:
             c = f["cifras"]
             if c["sin_respaldo"]:
@@ -353,8 +314,15 @@ def main(argv=None) -> int:
                   f"{resumen['afirmaciones_esperadas']} dijeron lo que debían")
         print(f" tokens             {resumen['tokens_entrada']:,} entrada · "
               f"{resumen['tokens_salida']:,} salida")
+        # `usd_por_consulta` es None si no hubo ni una llamada al modelo (cero
+        # casos, p. ej. un `--solo` con el id mal escrito). Formatearlo con
+        # `:.6f` reventaba con TypeError en vez de decir que no habia nada que
+        # medir.
+        por_consulta = resumen["usd_por_consulta"]
+        cola = (f"{por_consulta:.6f} por consulta" if por_consulta is not None
+                else "sin consultas al modelo")
         print(f" coste              USD {resumen['usd_total']:.5f} en total · "
-              f"{resumen['usd_por_consulta']:.6f} por consulta")
+              f"{cola}")
         if resumen["casos_sin_modelo"]:
             print(f" SIN MODELO         {resumen['casos_sin_modelo']}"
                   f"  <- estos no miden generación")

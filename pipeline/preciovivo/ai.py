@@ -25,6 +25,8 @@ import re
 import statistics
 from typing import Any
 
+from .verificador import instruccion_de_correccion, verificar
+
 try:  # Carga .env (clave DeepSeek, etc.) si existe — opcional, no-op sin el paquete.
     from dotenv import load_dotenv
 
@@ -492,32 +494,81 @@ def answer_with_context(pregunta: str, contexto: str, catalogo: list[dict]) -> d
             },
         },
     }
-    try:
+    mensajes = [
+        {"role": "system", "content": system},
+        {"role": "user",
+         "content": f"CONTEXTO:\n{contexto}\n\n"
+                    f"Slugs válidos: {[c['slug'] for c in catalogo]}\n\n"
+                    f"Pregunta: {pregunta}"},
+    ]
+
+    def _pedir(msgs: list[dict]) -> tuple[str, list[str], dict | None] | None:
+        """Una llamada al modelo. Devuelve None si no se pudo obtener texto."""
         import json as _json
         resp = client.chat.completions.create(
             model=AI_MODEL, max_tokens=900, tools=[tool],
             tool_choice={"type": "function", "function": {"name": "responder"}},
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user",
-                 "content": f"CONTEXTO:\n{contexto}\n\n"
-                            f"Slugs válidos: {[c['slug'] for c in catalogo]}\n\n"
-                            f"Pregunta: {pregunta}"},
-            ],
+            messages=msgs,
         )
         call = resp.choices[0].message.tool_calls[0]
         data = _json.loads(call.function.arguments)
         texto = (data.get("texto") or "").strip()
-        slugs = [s for s in (data.get("slugs") or []) if isinstance(s, str)][:8]
-        if texto:
-            # `uso` es ADITIVO: quien no lo mire sigue funcionando igual. Existe
-            # porque el coste por consulta no se puede vigilar si no se mide, y
-            # medirlo desde fuera obligaría a estimar el tamaño del prompt en vez
-            # de leer lo que el proveedor cobró.
-            u = getattr(resp, "usage", None)
-            uso = {"entrada": getattr(u, "prompt_tokens", None),
-                   "salida": getattr(u, "completion_tokens", None)} if u else None
-            return {"texto": texto, "slugs": slugs, "fuente": "llm-rag", "uso": uso}
+        if not texto:
+            return None
+        slugs = [x for x in (data.get("slugs") or []) if isinstance(x, str)][:8]
+        # `uso` es ADITIVO: quien no lo mire sigue funcionando igual. Existe
+        # porque el coste por consulta no se puede vigilar si no se mide, y
+        # medirlo desde fuera obligaría a estimar el tamaño del prompt en vez de
+        # leer lo que el proveedor cobró.
+        u = getattr(resp, "usage", None)
+        uso = {"entrada": getattr(u, "prompt_tokens", None),
+               "salida": getattr(u, "completion_tokens", None)} if u else None
+        return texto, slugs, uso
+
+    def _suma(a: dict | None, b: dict | None) -> dict | None:
+        """El coste del reintento SE SUMA. Reportar solo la última llamada
+        escondería que una respuesta verificada costó dos."""
+        if a is None:
+            return b
+        if b is None:
+            return a
+        return {k: (a.get(k) or 0) + (b.get(k) or 0) for k in ("entrada", "salida")}
+
+    try:
+        primera = _pedir(mensajes)
+        if primera is None:
+            return fb
+        texto, slugs, uso = primera
+
+        # DOBLE COMPROBACIÓN. El prompt ya dice «nunca inventes cifras»; esto
+        # comprueba que se cumplió en vez de confiar en que se cumplió. La misma
+        # función que usa `evals/run_generacion.py` para medirlo.
+        v = verificar(texto, contexto)
+        if v.ok:
+            return {"texto": texto, "slugs": slugs, "fuente": "llm-rag",
+                    "uso": uso, "verificacion": {"estado": "ok"}}
+
+        # Reintento señalando las cifras exactas. Repetir la regla general no
+        # sirve: ya estaba en el system y no bastó.
+        segunda = _pedir(mensajes + [
+            {"role": "assistant", "content": texto},
+            {"role": "user", "content": instruccion_de_correccion(v)},
+        ])
+        if segunda is not None:
+            texto2, slugs2, uso2 = segunda
+            uso = _suma(uso, uso2)
+            v2 = verificar(texto2, contexto)
+            if v2.ok:
+                return {"texto": texto2, "slugs": slugs2, "fuente": "llm-rag",
+                        "uso": uso,
+                        "verificacion": {"estado": "corregida",
+                                         "primer_intento": v.sin_respaldo}}
+
+        # Reincidió. Se degrada a la respuesta determinista: peor y verdadera
+        # gana a buena e inventada, que es la misma regla que sostiene el piso
+        # determinista de la recuperación.
+        return {**fb, "verificacion": {"estado": "degradada",
+                                       "motivo": v.motivo}}
     except Exception:
         pass
     return fb
