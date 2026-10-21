@@ -157,10 +157,9 @@ export default function Estacional({ producto }: Props) {
                   rx={1.5}
                   fill={fill}
                 >
-                  <title>
-                    {MESES_LARGO[i]}: {soles(v)}
-                    {vigente ? " · mes vigente" : ""}
-                  </title>
+                  {/* Un solo string: con varios hijos el SSR deja el <title> vacío y
+                      la ficha falla al hidratar (React #418). */}
+                  <title>{`${MESES_LARGO[i]}: ${soles(v)}${vigente ? " · mes vigente" : ""}`}</title>
                 </rect>
                 <text
                   x={cx}
