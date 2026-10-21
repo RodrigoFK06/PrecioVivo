@@ -53,7 +53,8 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
 
         {/* ── Colofón + CTA Árkos ──────────────────────────────────── */}
         <footer id="arkos" className="mt-20 border-t-2 border-ink/85 bg-paper">
-          <div className="mx-auto max-w-6xl px-4 py-10">
+          {/* pb-20 en móvil: deja libre el rincón del botón flotante «?» (Guia). */}
+          <div className="mx-auto max-w-6xl px-4 pt-10 pb-20 sm:pb-10">
             <div className="flex flex-col gap-5 border-b border-rule pb-8 sm:flex-row sm:items-end sm:justify-between">
               <div className="max-w-md">
                 <a
@@ -84,7 +85,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
                 </p>
               </div>
               <a
-                href="mailto:rodrigoan.torresp@gmail.com?subject=Software%20de%20datos%20%2B%20IA%20a%20medida"
+                href="mailto:gerencia@xn--rkos-4na.com?subject=Software%20de%20datos%20%2B%20IA%20a%20medida"
                 className="shrink-0 inline-flex items-center gap-1.5 border border-ink bg-ink px-5 py-2.5 text-sm font-medium text-paper transition-opacity hover:opacity-90"
               >
                 Hablemos →

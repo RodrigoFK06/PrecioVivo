@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { soles, pct, moveBg } from "@/lib/format";
+import { soles, pct, moveBg, nombreProducto } from "@/lib/format";
 
 type Fila = {
   nombre: string;
@@ -130,7 +130,7 @@ export default function ConsultaBox() {
                 const contenido = (
                   <>
                     <span className="truncate text-sm">
-                      {p.nombre}
+                      {nombreProducto(p.nombre)}
                       {p.mercado && (
                         <span className="ml-1.5 text-xs text-faint">· {p.mercado}</span>
                       )}

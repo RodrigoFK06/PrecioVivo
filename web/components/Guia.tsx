@@ -141,11 +141,12 @@ export default function Guia() {
         <button
           type="button"
           onClick={() => setModo("bienvenida")}
-          className="fixed bottom-4 right-4 z-40 inline-flex items-center gap-2 border border-ink bg-ink px-4 py-2.5 text-sm font-medium text-paper shadow-lg hover:opacity-90 transition-opacity"
+          className="fixed bottom-3 right-3 z-40 inline-flex h-11 w-11 items-center justify-center gap-2 border border-ink bg-ink text-sm font-medium text-paper shadow-lg hover:opacity-90 transition-opacity sm:bottom-4 sm:right-4 sm:h-auto sm:w-auto sm:px-4 sm:py-2.5"
           aria-label="Qué es Precio Vivo y cómo leerlo"
         >
           <span aria-hidden className="text-base leading-none">?</span>
-          Qué es esto
+          {/* En móvil solo el «?»: la etiqueta completa tapaba filas en cada pantalla. */}
+          <span className="hidden sm:inline">Qué es esto</span>
         </button>
       )}
 

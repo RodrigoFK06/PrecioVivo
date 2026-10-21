@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { buscarProductos, type Producto } from "@/lib/data";
-import { soles, pct, tons, moveBg, tendenciaClass } from "@/lib/format";
+import { soles, pct, tons, moveBg, tendenciaClass, nombreProducto } from "@/lib/format";
 import Sparkline from "@/components/Sparkline";
 
 type SortKey = "nombre" | "precio" | "var" | "ingreso";
@@ -106,7 +106,7 @@ export default function ProductTable({ productos }: { productos: Producto[] }) {
                   key={c.key}
                   scope="col"
                   aria-sort={ariaSort(c.key)}
-                  className={`px-4 py-2 font-medium ${c.align === "right" ? "text-right" : ""}`}
+                  className={`px-4 py-2 font-medium ${c.align === "right" ? "text-right whitespace-nowrap" : ""}`}
                 >
                   <button
                     type="button"
@@ -163,16 +163,19 @@ export default function ProductTable({ productos }: { productos: Producto[] }) {
                       href={`/p/${p.slug}`}
                       className="font-medium text-ink hover:text-accent hover:underline"
                     >
-                      {p.nombre}
+                      {nombreProducto(p.nombre)}
                     </Link>
+                    {/* Sin este corte, la última palabra + "/unidad" era un bloque
+                        irrompible y en 390 px empujaba la columna Δ fuera de la tabla. */}
+                    <wbr />
                     <span className="ml-1.5 text-xs text-faint">
                       /{p.unidad.toLowerCase()}
                     </span>
                   </td>
-                  <td className="px-4 py-2 text-right tabular-nums">
+                  <td className="px-4 py-2 text-right tabular-nums whitespace-nowrap">
                     {soles(p.latest.precio_kg)}
                   </td>
-                  <td className="px-4 py-2 text-right">
+                  <td className="px-4 py-2 text-right whitespace-nowrap">
                     <span
                       className={`rounded px-1.5 py-0.5 text-xs font-medium tabular-nums ${moveBg(
                         p.latest.var_pct,
@@ -193,7 +196,7 @@ export default function ProductTable({ productos }: { productos: Producto[] }) {
                   <td className="hidden lg:table-cell px-4 py-2 text-right tabular-nums text-muted">
                     {tons(p.latest.masa_hoy)}
                   </td>
-                  <td className="hidden sm:table-cell px-4 py-2 text-right tabular-nums text-muted">
+                  <td className="hidden sm:table-cell px-4 py-2 text-right tabular-nums whitespace-nowrap text-muted">
                     {fc ? (
                       <span
                         title={`Estimado a ${fc.horizonte_dias} día(s) · método ${fc.metodo} · rango S/ ${fc.intervalo[0].toFixed(

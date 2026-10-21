@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { productosToCSV, type Producto } from "@/lib/data";
-import { pct, fechaCorta } from "@/lib/format";
+import { pct, fechaCorta, nombreProducto } from "@/lib/format";
 
 /**
  * Alerta operativa generada por el pipeline (reglas sobre el último día).
@@ -194,7 +194,7 @@ export default function AlertasWatchlist({ alertas, productos }: Props) {
                 <span aria-hidden className="mr-1">
                   {activo ? "✓" : "+"}
                 </span>
-                {p.nombre}
+                {nombreProducto(p.nombre)}
               </button>
             );
           })}
@@ -217,7 +217,7 @@ export default function AlertasWatchlist({ alertas, productos }: Props) {
                     href={`/p/${a.slug}`}
                     className="truncate text-sm font-medium text-ink hover:text-accent hover:underline"
                   >
-                    {a.producto}
+                    {nombreProducto(a.producto)}
                   </Link>
                   {enWatch && (
                     <span className="shrink-0 rounded-sm bg-accent/[0.08] px-1 py-0.5 text-[9px] uppercase tracking-wide text-accent">

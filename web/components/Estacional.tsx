@@ -1,6 +1,6 @@
 import type { Producto } from "@/lib/data";
 import { estacionalDelProducto, promedioMensualHistorico } from "@/lib/data";
-import { soles, pct } from "@/lib/format";
+import { soles, pct, nombreProducto } from "@/lib/format";
 
 type Props = { producto: Producto };
 
@@ -33,7 +33,7 @@ export default function Estacional({ producto }: Props) {
       <div className="rounded-sm border border-rule bg-card p-5">
         <h2 className="font-serif text-base text-ink mb-2">Estacionalidad</h2>
         <p className="text-muted text-sm leading-relaxed">
-          Todavía no hay suficiente historia de {producto.nombre} para comparar su
+          Todavía no hay suficiente historia de {nombreProducto(producto.nombre)} para comparar su
           precio de hoy con su mismo mes en años anteriores.
         </p>
       </div>
@@ -89,7 +89,7 @@ export default function Estacional({ producto }: Props) {
       </div>
 
       <p className="text-ink leading-relaxed text-[15px]">
-        <span className="font-medium text-ink">{producto.nombre}</span> está{" "}
+        <span className="font-medium text-ink">{nombreProducto(producto.nombre)}</span> está{" "}
         <span className={`font-semibold tabular-nums ${tono}`}>
           {pct(desviacionPct)}
         </span>{" "}
@@ -115,7 +115,7 @@ export default function Estacional({ producto }: Props) {
           viewBox={`0 0 ${W} ${H}`}
           className="w-full"
           role="img"
-          aria-label={`Promedio histórico por mes de ${producto.nombre}; mes vigente: ${mesNombre}`}
+          aria-label={`Promedio histórico por mes de ${nombreProducto(producto.nombre)}; mes vigente: ${mesNombre}`}
         >
           {porMes.map((v, i) => {
             const cx = i * slot + slot / 2;

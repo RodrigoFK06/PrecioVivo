@@ -6,7 +6,7 @@ import {
   comparacionHonesta,
   type Producto,
 } from "@/lib/data";
-import { soles, pct, tons, fechaLarga, moveBg } from "@/lib/format";
+import { soles, pct, tons, fechaLarga, moveBg, nombreProducto } from "@/lib/format";
 import AISummary from "@/components/AISummary";
 import ConsultaBox from "@/components/ConsultaBox";
 import KillGateNote, { type ModeloIAResumen } from "@/components/KillGateNote";
@@ -115,7 +115,7 @@ function ListaMovers({
               className="group flex items-baseline justify-between gap-2 py-2"
             >
               <span className="truncate text-[15px] text-ink group-hover:text-accent transition-colors">
-                {p.nombre}
+                {nombreProducto(p.nombre)}
               </span>
               {kind === "precio" ? (
                 <span className="flex items-baseline gap-2 shrink-0 tabular-nums">
@@ -248,7 +248,7 @@ export default async function Home() {
         titulo="El día de hoy"
         bajada="Resumen automático del mercado y consulta en lenguaje natural sobre los precios."
       >
-        <div className="grid gap-5 lg:grid-cols-2 items-start">
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2 items-start">
           <div data-guia="resumen">
             <AISummary resumen={snap.resumenIA} />
           </div>

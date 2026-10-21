@@ -16,8 +16,8 @@ export default function AISummary({ resumen }: Props) {
 
   return (
     <div className="h-full rounded-sm border border-rule bg-card p-5">
-      <div className="flex items-center gap-2 mb-2">
-        <h2 className="font-serif text-base text-ink">Resumen del día</h2>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-2">
+        <h2 className="font-serif text-base text-ink whitespace-nowrap">Resumen del día</h2>
         {esFallback ? (
           <span
             className="text-[10px] uppercase tracking-wide rounded-sm bg-ink/[0.05] text-muted px-1.5 py-0.5"

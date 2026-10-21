@@ -5,6 +5,7 @@ import {
   tons,
   fechaCorta,
   fechaLarga,
+  nombreProducto,
 } from "@/lib/format";
 
 describe("soles", () => {
@@ -55,6 +56,22 @@ describe("tons", () => {
   it("devuelve em-dash para null/undefined", () => {
     expect(tons(null)).toBe("—");
     expect(tons(undefined)).toBe("—");
+  });
+});
+
+describe("nombreProducto", () => {
+  it("baja los conectores cortos que el Title Case subió", () => {
+    expect(nombreProducto("Ajo Criollo O Napuri")).toBe("Ajo Criollo o Napuri");
+    expect(nombreProducto("Maiz Marlo/Coronta De Maiz")).toBe("Maiz Marlo/Coronta de Maiz");
+  });
+
+  it("no toca la primera palabra ni los nombres sin conectores", () => {
+    expect(nombreProducto("De Temporada")).toBe("De Temporada");
+    expect(nombreProducto("Papa Amarilla")).toBe("Papa Amarilla");
+  });
+
+  it("deja tal cual los nombres en MAYÚSCULAS de otros mercados", () => {
+    expect(nombreProducto("CHIRIMOYA CRIOLLA O HUAYCO")).toBe("CHIRIMOYA CRIOLLA O HUAYCO");
   });
 });
 

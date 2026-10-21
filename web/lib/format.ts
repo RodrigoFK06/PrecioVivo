@@ -13,6 +13,22 @@ export const pct = (n: number | null | undefined) =>
 export const tons = (n: number | null | undefined) =>
   n == null ? "—" : `${n.toLocaleString("es-PE")} t`;
 
+/**
+ * Nombre de producto para mostrar. El reporte fuente (y el pipeline, con
+ * `.title()`) capitaliza todo: "Ajo Criollo O Napuri". Aquí los conectores
+ * cortos van en minúscula salvo al inicio. Solo presentación: el nombre
+ * canónico (clave de la BD, del slug y de los CSV) no se toca. Los nombres en
+ * MAYÚSCULAS de otros mercados se dejan tal cual.
+ */
+const CONECTORES = new Set(["o", "u", "y", "e", "de", "del", "la", "las", "el", "los", "en", "con", "sin", "al"]);
+export const nombreProducto = (nombre: string) =>
+  nombre === nombre.toUpperCase()
+    ? nombre
+    : nombre
+        .split(" ")
+        .map((w, i) => (i > 0 && CONECTORES.has(w.toLowerCase()) ? w.toLowerCase() : w))
+        .join(" ");
+
 export const fechaCorta = (iso: string) => {
   const [, m, d] = iso.split("-");
   return `${+d} ${MESES[+m - 1]}`;

@@ -8,7 +8,7 @@ import {
   type Point,
   type Producto,
 } from "@/lib/data";
-import { soles, fechaCorta } from "@/lib/format";
+import { soles, fechaCorta, nombreProducto } from "@/lib/format";
 
 // Paleta de líneas: tonos distinguibles entre sí, neutros respecto al tema
 // (el rojo/verde del tema codifica "más caro / más barato", no identidad de serie).
@@ -201,7 +201,7 @@ export default function Comparador({ productos }: { productos: Producto[] }) {
                           : { borderColor: "#cbc4b1" }
                       }
                     />
-                    <span className="flex-1 truncate">{p.nombre}</span>
+                    <span className="flex-1 truncate">{nombreProducto(p.nombre)}</span>
                     <span className="shrink-0 tabular-nums text-xs text-faint">
                       {soles(p.latest.precio_kg)}
                     </span>
@@ -228,7 +228,7 @@ export default function Comparador({ productos }: { productos: Producto[] }) {
                     className="inline-block h-2.5 w-3.5 rounded-sm"
                     style={{ backgroundColor: colorDe(p.slug) }}
                   />
-                  <span className="text-xs text-muted">{p.nombre}</span>
+                  <span className="text-xs text-muted">{nombreProducto(p.nombre)}</span>
                   <span className="text-xs tabular-nums text-faint">
                     {soles(p.latest.precio_kg)}
                   </span>
@@ -379,7 +379,7 @@ function ComparadorChart({
       className="w-full"
       role="img"
       aria-label={`Comparación de precios de ${productos
-        .map((p) => p.nombre)
+        .map((p) => nombreProducto(p.nombre))
         .join(", ")}`}
     >
       {/* líneas de cuadrícula + etiquetas de precio */}

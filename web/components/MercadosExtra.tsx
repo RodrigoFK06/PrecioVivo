@@ -13,8 +13,10 @@ type Props = {
  */
 export default function MercadosExtra({ mercados }: Props) {
   if (mercados.length === 0) return null;
+  // items-start: sin él la tarjeta corta (Mercado de Aves, 1 fila) se estira
+  // hasta la altura de la lista de frutas y queda una caja vacía.
   return (
-    <div className="grid gap-5 md:grid-cols-2">
+    <div className="grid items-start gap-5 md:grid-cols-2">
       {mercados.map((m) => (
         <div key={m.codigo} className="rounded-md border border-rule bg-card p-5">
           <div className="flex items-baseline justify-between gap-2">

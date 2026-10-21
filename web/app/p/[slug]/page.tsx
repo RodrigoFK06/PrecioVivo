@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { getSnapshot, getProducto, stats, type Anomalia } from "@/lib/data";
-import { soles, pct, tons, fechaLarga, moveBg, tendenciaClass } from "@/lib/format";
+import { soles, pct, tons, fechaLarga, moveBg, tendenciaClass, nombreProducto } from "@/lib/format";
 import PriceChart from "@/components/PriceChart";
 import ForecastPanel from "@/components/ForecastPanel";
 import Estacional from "@/components/Estacional";
@@ -31,8 +31,8 @@ export async function generateMetadata({
   if (!p) return { title: "Producto no encontrado — Precio Vivo" };
   const precio = soles(p.latest.precio_kg);
   return {
-    title: `Precio de ${p.nombre} hoy en Lima — ${precio}/kg | Precio Vivo`,
-    description: `Precio mayorista de ${p.nombre} en el Gran Mercado Mayorista de Lima: ${precio} por kg (${pct(
+    title: `Precio de ${nombreProducto(p.nombre)} hoy en Lima — ${precio}/kg | Precio Vivo`,
+    description: `Precio mayorista de ${nombreProducto(p.nombre)} en el Gran Mercado Mayorista de Lima: ${precio} por kg (${pct(
       p.latest.var_pct,
     )} vs ayer). Historial y tendencia.`,
   };
@@ -67,7 +67,7 @@ export default async function ProductoPage({ params }: { params: Promise<{ slug:
 
       <div className="mt-4 flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
         <div>
-          <h1 className="font-serif text-2xl sm:text-3xl font-bold tracking-tight text-ink">{p.nombre}</h1>
+          <h1 className="font-serif text-2xl sm:text-3xl font-bold tracking-tight text-ink">{nombreProducto(p.nombre)}</h1>
           <p className="text-muted mt-1 text-sm">
             {p.unidad} · equiv. {p.equiv_kg ?? "—"} kg · actualizado {fechaLarga(p.latest.fecha)}
           </p>
