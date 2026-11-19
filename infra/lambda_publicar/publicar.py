@@ -98,6 +98,37 @@ def _token() -> str:
         f'--value "<token>" --overwrite')
 
 
+class TokenGitHubRechazado(RuntimeError):
+    """GitHub respondió 401: el token guardado en Parameter Store ya no sirve.
+
+    PASÓ DE VERDAD. El token venció el 18-sep-2026 y la tubería falló todos los
+    días hábiles hasta el 19-nov con un `RuntimeError` genérico. Cosecha,
+    forecast, export e índice terminaban bien y el dato fresco estaba en S3; solo
+    faltaba el último paso, y nada en el error decía que el arreglo era rotar una
+    credencial.
+
+    Es una clase propia y no un `RuntimeError` porque Step Functions usa el nombre
+    de la excepción como campo `error` de la ejecución, que es lo primero que se
+    ve al listar ejecuciones. `TokenGitHubRechazado` se entiende sin abrir nada.
+    """
+
+
+def _como_rotar(detalle: str) -> str:
+    return (
+        f"GitHub rechazó el token de {PARAM_TOKEN} (401): venció o fue revocado. "
+        f"Los pasos anteriores sí terminaron y el snapshot del día ya está en S3; "
+        f"solo falta publicarlo. Arreglo:\n"
+        f"  1. Crear un token fine-grained en "
+        f"https://github.com/settings/personal-access-tokens/new con acceso solo "
+        f"a {REPO} y permiso Contents: Read and write.\n"
+        f'  2. aws ssm put-parameter --name "{PARAM_TOKEN}" --type SecureString '
+        f'--overwrite --value "<token>"\n'
+        f"  3. Volver a lanzar la máquina de estados: publica de una vez todo lo que "
+        f"se acumuló en S3.\n"
+        f"Respuesta de GitHub: {detalle}"
+    )
+
+
 def _api(token: str, metodo: str, ruta: str, cuerpo: dict | None = None) -> dict:
     datos = json.dumps(cuerpo).encode() if cuerpo is not None else None
     req = urllib.request.Request(API + ruta, data=datos, method=metodo, headers={
@@ -114,6 +145,8 @@ def _api(token: str, metodo: str, ruta: str, cuerpo: dict | None = None) -> dict
         # El cuerpo del error de GitHub dice QUÉ permiso falta; sin él, un 403 es
         # indistinguible de un token caducado.
         detalle = e.read().decode("utf-8", "replace")[:400]
+        if e.code == 401:
+            raise TokenGitHubRechazado(_como_rotar(detalle)) from e
         raise RuntimeError(f"GitHub {metodo} {ruta} -> {e.code}: {detalle}") from e
 
 

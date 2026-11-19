@@ -927,6 +927,39 @@ snapshot). Se crea una vez con:
       --value "<token>" --overwrite
 ```
 
+### El token de GitHub vence
+
+Que el parámetro exista no basta: el token que guarda **caduca**. El de
+`/preciovivo/github-token` se guardó el 19-ago-2026, venció el 18-sep y desde el
+21-sep cada ejecución terminó en FAILED en `PublicarEnGitHub` con
+`401 Bad credentials`. Todo lo anterior seguía en verde: la cosecha, el forecast,
+el export y el índice dejaban el dato del día en S3, pero el sitio se quedó en el
+2026-09-17 durante dos meses.
+
+El síntoma es inconfundible: la ejecución falla en el **último** paso y el error
+es `TokenGitHubRechazado` (antes de este cambio, un `RuntimeError` con `401`).
+No hace falta reprocesar nada; el arreglo es rotar la credencial:
+
+1. Crear un token *fine-grained* en
+   <https://github.com/settings/personal-access-tokens/new>: acceso solo a
+   `RodrigoFK06/PrecioVivo`, permiso **Contents: Read and write**, y la
+   caducidad más larga que se esté dispuesto a aceptar.
+2. Guardarlo sin que quede en el historial de la consola (PowerShell 7):
+
+   ```
+   aws ssm put-parameter --name /preciovivo/github-token --type SecureString --overwrite --value (Read-Host -MaskInput "token")
+   ```
+
+3. Relanzar la máquina. El export ya tiene en S3 toda la serie acumulada, así
+   que una sola ejecución publica todos los días atrasados:
+
+   ```
+   aws stepfunctions start-execution --state-machine-arn <salida MaquinaDeEstados de PrecioVivoFase3> --input '{"dias": 5}'
+   ```
+
+Y un recordatorio en el calendario una semana antes de la nueva fecha de
+caducidad. Es la única pieza de la tubería que vence sola.
+
 ### La publicación: un commit, no tres
 
 Sustituye las últimas cinco líneas de `actualizar-diario.ps1`. Vercel se

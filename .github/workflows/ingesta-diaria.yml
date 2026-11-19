@@ -21,8 +21,8 @@ name: Ingesta diaria
 #
 # El trabajo `ingesta` está desactivado por defecto (`if: vars.INGESTA_EN_CI`).
 # Para probarlo: definir la variable de repositorio INGESTA_EN_CI=1, o lanzarlo
-# a mano con `forzar_ingesta`. Mientras tanto, la ingesta real corre en la
-# máquina del mantenedor vía scripts/actualizar-diario.ps1.
+# a mano con `forzar_ingesta`. Mientras tanto, la ingesta real corre en AWS
+# (Step Functions + Lambda, ver infra/ y docs/aws.md).
 # ═══════════════════════════════════════════════════════════════════════════
 
 on:
@@ -96,10 +96,13 @@ jobs:
               "Este es el modo de falla que un healthcheck normal no detecta.",
               "",
               "Qué revisar, en orden:",
-              "1. La tarea programada de Windows que corre `scripts/actualizar-diario.ps1`.",
-              "2. Que la fuente publique: `python -m preciovivo.ingest --health`.",
-              "3. Si el parser se rompió por un cambio de formato (el tripwire de",
-              "   encabezados lo bloquearía y quedaría registrado en el log).",
+              "1. La última ejecución de la máquina de estados diaria en Step Functions",
+              "   (us-east-1, stack `PrecioVivoFase3`). Su campo `error` dice qué paso falló.",
+              "2. Si es `TokenGitHubRechazado` o un 401 en `PublicarEnGitHub`, venció el token",
+              "   de `/preciovivo/github-token`. El dato ya está en S3: basta con rotarlo y",
+              "   relanzar la máquina (docs/aws.md, «El token de GitHub vence»).",
+              "3. Si es `CompuertaDeEscritura`, cambió el layout del PDF y el parser bloqueó",
+              "   la carga. Que la fuente publique: `python -m preciovivo.ingest --health`.",
               "",
               `Detectado por \`.github/workflows/ingesta-diaria.yml\` el ${new Date().toISOString()}.`,
             ].join("\n");
